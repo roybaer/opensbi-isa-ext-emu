@@ -44,6 +44,12 @@ void spacemit_top_on(u_register_t mpidr)
 		(1 << CLUSTER_BIT25_OFFSET) |
 		(1 << CLUSTER_BIT13_OFFSET));
 	writel(value, cluster1_acpr);
+
+	/* enable the gpio edge detected function again
+	 * */
+	value = readl((unsigned int *)0xd4051000);
+	value &= ~(1 << 21);
+	writel(value, (unsigned int *)0xd4051000);
 }
 
 /* D1P & D2 ? */
@@ -60,6 +66,7 @@ void spacemit_top_off(u_register_t mpidr)
 		(1 << CLUSTER_DDRSD_OFFSET) |
 		(1 << CLUSTER_APBSD_OFFSET) |
 		(1 << CLUSTER_VCXOSD_OFFSET) |
+		(1 << 3) |
 		(1 << CLUSTER_BIT29_OFFSET) |
 		(1 << CLUSTER_BIT14_OFFSET) |
 		(1 << CLUSTER_BIT30_OFFSET) |
@@ -72,6 +79,7 @@ void spacemit_top_off(u_register_t mpidr)
 		(1 << CLUSTER_DDRSD_OFFSET) |
 		(1 << CLUSTER_APBSD_OFFSET) |
 		(1 << CLUSTER_VCXOSD_OFFSET) |
+		(1 << 3) |
 		(1 << CLUSTER_BIT29_OFFSET) |
 		(1 << CLUSTER_BIT14_OFFSET) |
 		(1 << CLUSTER_BIT30_OFFSET) |
@@ -80,8 +88,22 @@ void spacemit_top_off(u_register_t mpidr)
 	writel(value, cluster1_acpr);
 
 	value = readl((unsigned int *)PMU_ACPR_UNKONW_REG);
-	value |= (1 << 2);
+	value |= (1 << 2) | (1 << 0);
 	writel(value, (unsigned int *)PMU_ACPR_UNKONW_REG);
+
+	/* disable the gpio edge detect function
+	 * this may cause the system cann't enter D2
+	 * */
+	value = readl((unsigned int *)0xd4051000);
+	value |= (1 << 21);
+	writel(value, (unsigned int *)0xd4051000);
+
+	/* enable the refbuf function which will enhance the
+	 * driving capability of the internal 26M to PLL path
+	 * */
+	value = readl((unsigned int *)0xd4090104);
+	value |= (1 << 22);
+	writel(value, (unsigned int *)0xd4090104);
 
 	/* for wakeup debug */
 	writel(0xffff, (unsigned int *)0xd4051030);
