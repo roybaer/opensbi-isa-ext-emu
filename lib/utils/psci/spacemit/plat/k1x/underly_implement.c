@@ -44,12 +44,6 @@ void spacemit_top_on(u_register_t mpidr)
 		(1 << CLUSTER_BIT25_OFFSET) |
 		(1 << CLUSTER_BIT13_OFFSET));
 	writel(value, cluster1_acpr);
-
-	/* enable the gpio edge detected function again
-	 * */
-	value = readl((unsigned int *)0xd4051000);
-	value &= ~(1 << 21);
-	writel(value, (unsigned int *)0xd4051000);
 }
 
 /* D1P & D2 ? */
@@ -90,13 +84,6 @@ void spacemit_top_off(u_register_t mpidr)
 	value = readl((unsigned int *)PMU_ACPR_UNKONW_REG);
 	value |= (1 << 2) | (1 << 0);
 	writel(value, (unsigned int *)PMU_ACPR_UNKONW_REG);
-
-	/* disable the gpio edge detect function
-	 * this may cause the system cann't enter D2
-	 * */
-	value = readl((unsigned int *)0xd4051000);
-	value |= (1 << 21);
-	writel(value, (unsigned int *)0xd4051000);
 
 	/* enable the refbuf function which will enhance the
 	 * driving capability of the internal 26M to PLL path
