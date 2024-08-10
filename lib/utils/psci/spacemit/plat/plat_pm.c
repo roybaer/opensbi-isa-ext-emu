@@ -147,6 +147,9 @@ static void spacemit_pwr_domain_pwr_down_wfi(const psci_power_state_t *target_st
 		spin_lock(&psciipi_lock);
 
 		if (sbi_hartmask_test_hart(hartid, &psciipi_wait_hmask)) {
+
+			sbi_hartmask_clear_hart(hartid, &psciipi_wait_hmask);
+
 			sbi_ipi_raw_clear(hartid);
 			/* Restore MIE CSR */
 			csr_write(CSR_MIE, saved_mie);
