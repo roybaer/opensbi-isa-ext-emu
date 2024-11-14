@@ -51,12 +51,21 @@ static int irqchip_plic_update_context_map(const void *fdt, int nodeoff,
 			continue;
 
 		switch (hwirq) {
+#ifndef CONFIG_BOOTING_FROM_NO_AI_CORE
 		case IRQ_M_EXT:
 			pd->context_map[hartindex][PLIC_M_CONTEXT] = i / 2;
 			break;
 		case IRQ_S_EXT:
 			pd->context_map[hartindex][PLIC_S_CONTEXT] = i / 2;
 			break;
+#else
+		case IRQ_M_EXT:
+			pd->context_map[hartindex][PLIC_M_CONTEXT] = hartid;
+			break;
+		case IRQ_S_EXT:
+			pd->context_map[hartindex][PLIC_S_CONTEXT] = hartid;
+			break;
+#endif
 		}
 	}
 
