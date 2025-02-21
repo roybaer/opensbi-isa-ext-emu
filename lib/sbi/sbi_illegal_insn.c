@@ -20,7 +20,7 @@
 #include <sbi/sbi_unpriv.h>
 #include <sbi/sbi_console.h>
 
-int truly_illegal_insn(ulong insn, struct sbi_trap_regs *regs)
+int truly_illegal_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
 	struct sbi_trap_info trap;
 
@@ -30,11 +30,13 @@ int truly_illegal_insn(ulong insn, struct sbi_trap_regs *regs)
 	trap.tinst = 0;
 	trap.gva   = 0;
 
-	return sbi_trap_redirect(regs, &trap);
+	return sbi_trap_redirect(&tcntx->regs, &trap);
 }
 
-static int misc_mem_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
+static int misc_mem_opcode_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
+	struct sbi_trap_regs *regs = &tcntx->regs;
+
 	/* Errata workaround: emulate `fence.tso` as `fence rw, rw`. */
 	if ((insn & INSN_MASK_FENCE_TSO) == INSN_MATCH_FENCE_TSO) {
 		smp_mb();
@@ -42,11 +44,12 @@ static int misc_mem_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
 		return 0;
 	}
 
-	return truly_illegal_insn(insn, regs);
+	return truly_illegal_insn(insn, tcntx);
 }
 
-static int system_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
+static int system_opcode_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
+	struct sbi_trap_regs *regs = &tcntx->regs;
 	bool do_write	= false;
 	int rs1_num	= GET_RS1_NUM(insn);
 	ulong rs1_val	= GET_RS1(insn, regs);
@@ -65,11 +68,11 @@ static int system_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
 	if (funct3 == 0 || funct3 == 4) {
 		sbi_printf("%s: Invalid opcode for CSR read/write instruction",
 			   __func__);
-		return truly_illegal_insn(insn, regs);
+		return truly_illegal_insn(insn, tcntx);
 	}
 
 	if (sbi_emulate_csr_read(csr_num, regs, &csr_val))
-		return truly_illegal_insn(insn, regs);
+		return truly_illegal_insn(insn, tcntx);
 
 	switch (funct3) {
 	case CSRRW:
@@ -97,11 +100,11 @@ static int system_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
 		do_write    = (rs1_num != 0);
 		break;
 	default:
-		return truly_illegal_insn(insn, regs);
+		return truly_illegal_insn(insn, tcntx);
 	}
 
 	if (do_write && sbi_emulate_csr_write(csr_num, regs, new_csr_val))
-		return truly_illegal_insn(insn, regs);
+		return truly_illegal_insn(insn, tcntx);
 
 	SET_RD(insn, regs, csr_val);
 
@@ -168,8 +171,8 @@ int sbi_illegal_insn_handler(struct sbi_trap_context *tcntx)
 		if (uptrap.cause)
 			return sbi_trap_redirect(regs, &uptrap);
 		if ((insn & 3) != 3)
-			return truly_illegal_insn(insn, regs);
+			return truly_illegal_insn(insn, tcntx);
 	}
 
-	return illegal_insn_table[(insn & 0x7c) >> 2](insn, regs);
+	return illegal_insn_table[(insn & 0x7c) >> 2](insn, tcntx);
 }
