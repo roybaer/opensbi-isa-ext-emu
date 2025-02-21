@@ -41,6 +41,21 @@ int fdt_cmo_llc_flush_all(void)
 	return cache_flush_all(llc);
 }
 
+int fdt_cmo_flush_all(void)
+{
+	struct cache_device *c = get_hart_flc(sbi_scratch_thishart_ptr());
+	int result	       = SBI_ENODEV;
+
+	while (c) {
+		result = cache_flush_all(c);
+		if (result < 0)
+			return result;
+		c = c->next;
+	}
+
+	return result;
+}
+
 static int fdt_cmo_cold_init(const void *fdt)
 {
 	struct sbi_scratch *scratch;
