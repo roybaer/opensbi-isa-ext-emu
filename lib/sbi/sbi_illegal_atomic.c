@@ -17,9 +17,9 @@
 
 #ifdef __riscv_atomic
 
-int sbi_illegal_atomic(ulong insn, struct sbi_trap_regs *regs)
+int sbi_illegal_atomic(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return truly_illegal_insn(insn, regs);
+	return truly_illegal_insn(insn, tcntx);
 }
 
 #elif __riscv_zalrsc
@@ -98,9 +98,10 @@ DEFINE_UNPRIVILEGED_SC_FUNCTION(s64, _aqrl, sc.d.aqrl);
 #endif
 
 #define DEFINE_ATOMIC_FUNCTION(name, type, func)				\
-	static int atomic_##name(ulong insn, struct sbi_trap_regs *regs)	\
+	static int atomic_##name(ulong insn, struct sbi_trap_context *tcntx)	\
 	{									\
 		struct sbi_trap_info uptrap;					\
+		struct sbi_trap_regs *regs = &tcntx->regs;			\
 		ulong addr = GET_RS1(insn, regs);				\
 		ulong val = GET_RS2(insn, regs);				\
 		ulong rd_val = 0;						\
@@ -574,49 +575,49 @@ static const illegal_insn_func amomaxu_table[32] = {
 	truly_illegal_insn, /* 31 */
 };
 
-static int amoadd_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amoadd_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amoadd_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amoadd_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amoswap_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amoswap_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amoswap_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amoswap_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amoxor_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amoxor_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amoxor_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amoxor_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amoor_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amoor_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amoor_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amoor_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amoand_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amoand_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amoand_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amoand_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amomin_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amomin_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amomin_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amomin_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amomax_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amomax_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amomax_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amomax_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amominu_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amominu_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amominu_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amominu_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
-static int amomaxu_insn(ulong insn, struct sbi_trap_regs *regs)
+static int amomaxu_insn(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amomaxu_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, regs);
+	return amomaxu_table[(GET_FUNC3(insn) << 2) + GET_AQRL(insn)](insn, tcntx);
 }
 
 static const illegal_insn_func amo_insn_table[32] = {
@@ -654,9 +655,9 @@ static const illegal_insn_func amo_insn_table[32] = {
 	truly_illegal_insn  /* 31 */
 };
 
-int sbi_illegal_atomic(ulong insn, struct sbi_trap_regs *regs)
+int sbi_illegal_atomic(ulong insn, struct sbi_trap_context *tcntx)
 {
-	return amo_insn_table[(insn >> 27) & 0x1f](insn, regs);
+	return amo_insn_table[(insn >> 27) & 0x1f](insn, tcntx);
 }
 
 #else
