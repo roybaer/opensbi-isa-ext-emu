@@ -10,8 +10,8 @@
 
 #include <sbi/sbi_types.h>
 
-struct sbi_trap_regs;
+struct sbi_trap_context;
 
-int sbi_illegal_atomic(ulong insn, struct sbi_trap_regs *regs);
+int sbi_illegal_atomic(ulong insn, struct sbi_trap_context *tcntx);
 
 #endif
