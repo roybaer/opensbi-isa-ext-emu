@@ -301,6 +301,12 @@ static bool starfive_jh7110_cold_boot_allowed(u32 hartid)
 	return generic_cold_boot_allowed(hartid);
 }
 
+static void starfive_jh7110_flush_data_caches(void)
+{
+	/* flush L1 data cache via cflush.d.l1 zero */
+	asm volatile(".insn i 0x73, 0, zero, zero, -0x40");
+}
+
 static int starfive_jh7110_platform_init(const void *fdt, int nodeoff,
 					 const struct fdt_match *match)
 {
@@ -316,6 +322,7 @@ static int starfive_jh7110_platform_init(const void *fdt, int nodeoff,
 
 	generic_platform_ops.cold_boot_allowed = starfive_jh7110_cold_boot_allowed;
 	generic_platform_ops.final_init = starfive_jh7110_final_init;
+	generic_platform_ops.flush_data_caches = starfive_jh7110_flush_data_caches;
 
 	return 0;
 }

@@ -13,6 +13,7 @@
 #include <sbi/sbi_types.h>
 
 struct sbi_trap_context;
+struct sbi_trap_regs;
 
 typedef int (*illegal_insn_func)(ulong insn, struct sbi_trap_regs *regs);
 

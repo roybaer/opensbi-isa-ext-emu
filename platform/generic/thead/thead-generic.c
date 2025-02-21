@@ -39,6 +39,12 @@ static int thead_pmu_extensions_init(struct sbi_hart_features *hfeatures)
 	return 0;
 }
 
+static void thead_flush_data_caches(void)
+{
+	/* flush data cache via th.dcache.call */
+	asm volatile(".insn i 0xb, 0, zero, zero, 1");
+}
+
 static int thead_generic_platform_init(const void *fdt, int nodeoff,
 				       const struct fdt_match *match)
 {
@@ -48,6 +54,7 @@ static int thead_generic_platform_init(const void *fdt, int nodeoff,
 		generic_platform_ops.early_init = thead_tlb_flush_early_init;
 	if (quirks->errata & THEAD_QUIRK_ERRATA_THEAD_PMU)
 		generic_platform_ops.extensions_init = thead_pmu_extensions_init;
+	generic_platform_ops.flush_data_caches = thead_flush_data_caches;
 
 	return 0;
 }

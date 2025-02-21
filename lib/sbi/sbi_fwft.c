@@ -241,11 +241,16 @@ static int fwft_set_pmlen(struct fwft_config *conf, unsigned long value)
 		return SBI_EINVAL;
 	}
 
+	/* Reset emulated pointer masking */
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+	scratch->sw_pm = 0;
+
 	prev = csr_read_clear(CSR_MENVCFG, ENVCFG_PMM);
 	csr_set(CSR_MENVCFG, pmm);
 	if ((csr_read(CSR_MENVCFG) & ENVCFG_PMM) != pmm) {
 		csr_write(CSR_MENVCFG, prev);
-		return SBI_EINVAL;
+		/* Instead of returning SBI_EINVAL, enable emulation */
+		scratch->sw_pm = value;
 	}
 
 	return SBI_OK;
@@ -253,6 +258,13 @@ static int fwft_set_pmlen(struct fwft_config *conf, unsigned long value)
 
 static int fwft_get_pmlen(struct fwft_config *conf, unsigned long *value)
 {
+	/* Check for emulated pointer masking */
+	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
+	if (scratch->sw_pm) {
+		*value = scratch->sw_pm;
+		return SBI_OK;
+	}
+
 	switch (csr_read(CSR_MENVCFG) & ENVCFG_PMM) {
 	case ENVCFG_PMM_PMLEN_0:
 		*value = 0;
