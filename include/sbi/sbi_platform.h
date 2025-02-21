@@ -149,6 +149,9 @@ struct sbi_platform_operations {
 			unsigned long log2len);
 	/** platform specific pmp disable on current HART */
 	void (*pmp_disable)(unsigned int n);
+
+	/** Flush at least all non-coherent data caches */
+	void (*flush_data_caches)(void);
 };
 
 /** Platform default per-HART stack size for exception/interrupt handling */
@@ -681,6 +684,17 @@ static inline void sbi_platform_pmp_disable(const struct sbi_platform *plat,
 {
 	if (plat && sbi_platform_ops(plat)->pmp_disable)
 		sbi_platform_ops(plat)->pmp_disable(n);
+}
+
+/**
+ * Ask platform to flush all non-coherent data caches
+ *
+ * @param plat pointer to struct sbi_platform
+ */
+static inline void sbi_platform_flush_data_caches(const struct sbi_platform *plat)
+{
+	if (plat && sbi_platform_ops(plat)->flush_data_caches)
+		sbi_platform_ops(plat)->flush_data_caches();
 }
 
 #endif
