@@ -1,6 +1,42 @@
 RISC-V Open Source Supervisor Binary Interface (OpenSBI)
 ========================================================
 
+**NOTE:**
+
+This fork (opensbi-isa-ext-emu) provides experimental trap-based emulation
+routines for various ISA extensions that are relevant to RVA22, RVB23 and RVA23.
+
+The main goal is to bridge gaps between an existing hardware implementation's
+RISC-V ISA support and a more recent ISA profile.
+
+CAUTION: The `isa-ext-emu` feature branch follows `upstream/master` via `rebase`!
+
+The following ISA extensions are currently supported:
+
+| ISA extension | Required by  | Status
+|:--------------|:-------------|:------------------------------------------
+| Zba           | RVA22        | fully implemented
+| Zbb           | RVA22        | fully implemented
+| Zbs           | RVA22        | fully implemented
+| Zcbom         | RVA22        | implemented as stub
+| Zcboz         | RVA22        | implemented as stub
+| Zfhmin        | RVA22        | fully implemented
+| Zicond        | RVB23, RVA23 | fully implemented
+| Zimop         | RVB23, RVA23 | fully implemented
+| Zcmop         | RVB23, RVA23 | fully implemented
+| Zcb           | RVB23, RVA23 | fully implemented
+| Zfa           | RVB23, RVA23 | fully implemented
+| Zawrs         | RVB23, RVA23 | implemented as stub
+| Zvbb          | RVA23        | pending, will require RVV1.0
+| H             | RVA23        | no independent plans\*
+
+\*) See [opensbi-h](https://github.com/dramforever/opensbi-h) for a fork that
+already provides a software-emulated hypervisor extension.
+
+**END OF NOTE**
+
+---
+
 ![RISC-V OpenSBI](docs/riscv_opensbi_logo_final_color.png)
 
 Copyright and License
