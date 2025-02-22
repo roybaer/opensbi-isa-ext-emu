@@ -76,6 +76,18 @@
 			: "r"(value), "r"(offset)                                                           \
 			: "t0");                                                                            \
 	})
+
+#define GET_F16_REG(insn, pos, regs)                      \
+	({                                                \
+		u32 value = GET_F32_REG(insn, pos, regs); \
+		if ((value & 0xffff0000) != 0xffff0000)   \
+			value = 0x7c00;                   \
+		(u16) value;                              \
+	})
+
+#define SET_F16_REG(insn, pos, regs, val) \
+	(SET_F32_REG(insn, pos, regs, (val) | 0xffff0000))
+
 #define GET_FCSR() csr_read(CSR_FCSR)
 #define SET_FCSR(value) csr_write(CSR_FCSR, (value))
 #define GET_FRM() csr_read(CSR_FRM)
@@ -91,10 +103,16 @@
 #define GET_F64_RS1(insn, regs) (GET_F64_REG(insn, 15, regs))
 #define GET_F64_RS2(insn, regs) (GET_F64_REG(insn, 20, regs))
 #define GET_F64_RS3(insn, regs) (GET_F64_REG(insn, 27, regs))
+#define GET_F16_RS1(insn, regs) (GET_F16_REG(insn, 15, regs))
+#define GET_F16_RS2(insn, regs) (GET_F16_REG(insn, 20, regs))
+#define GET_F16_RS3(insn, regs) (GET_F16_REG(insn, 27, regs))
+
 #define SET_F32_RD(insn, regs, val) \
 	(SET_F32_REG(insn, 7, regs, val), SET_FS_DIRTY(regs))
 #define SET_F64_RD(insn, regs, val) \
 	(SET_F64_REG(insn, 7, regs, val), SET_FS_DIRTY(regs))
+#define SET_F16_RD(insn, regs, val) \
+	(SET_F16_REG(insn, 7, regs, val), SET_FS_DIRTY(regs))
 
 #define GET_F32_RS2C(insn, regs) (GET_F32_REG(insn, 2, regs))
 #define GET_F32_RS2S(insn, regs) (GET_F32_REG(RVC_RS2S(insn), 0, regs))
