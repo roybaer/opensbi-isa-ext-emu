@@ -95,6 +95,9 @@ static int sbi_trap_emulate_load(struct sbi_trap_context *tcntx,
 	} else if ((insn & INSN_MASK_FLW) == INSN_MATCH_FLW) {
 		fp  = 1;
 		len = 4;
+	} else if ((insn & INSN_MASK_FLH) == INSN_MATCH_FLH) {
+		fp  = 1;
+		len = 2;
 #endif
 	} else if ((insn & INSN_MASK_LH) == INSN_MATCH_LH) {
 		len   = 2;
@@ -161,8 +164,10 @@ static int sbi_trap_emulate_load(struct sbi_trap_context *tcntx,
 #ifdef __riscv_flen
 		else if (len == 8)
 			SET_F64_RD(insn, regs, val.data_u64);
-		else
+		else if (len == 4)
 			SET_F32_RD(insn, regs, val.data_ulong);
+		else
+			SET_F16_RD(insn, regs, val.data_ulong);
 #endif
 	}
 
@@ -217,6 +222,9 @@ static int sbi_trap_emulate_store(struct sbi_trap_context *tcntx,
 	} else if ((insn & INSN_MASK_FSW) == INSN_MATCH_FSW) {
 		len	       = 4;
 		val.data_ulong = GET_F32_RS2(insn, regs);
+	} else if ((insn & INSN_MASK_FSH) == INSN_MATCH_FSH) {
+		len	       = 2;
+		val.data_ulong = GET_F16_RS2(insn, regs);
 #endif
 	} else if ((insn & INSN_MASK_SH) == INSN_MATCH_SH) {
 		len = 2;
