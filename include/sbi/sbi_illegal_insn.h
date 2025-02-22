@@ -17,7 +17,6 @@ struct sbi_trap_context;
 typedef int (*illegal_insn_func)(ulong insn, struct sbi_trap_context *tcntx);
 
 int truly_illegal_insn(ulong insn, struct sbi_trap_context *tcntx);
-
 int sbi_illegal_insn_handler(struct sbi_trap_context *tcntx);
 
 #endif
