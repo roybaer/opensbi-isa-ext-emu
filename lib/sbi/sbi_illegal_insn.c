@@ -42,6 +42,21 @@ static int misc_mem_opcode_insn(ulong insn, struct sbi_trap_regs *regs)
 		return 0;
 	}
 
+	/* Errata workaround: C906, C910 fail to ignore reserved fields
+	 * in the `fence` and `fence.i` encodings. [Thomas2024RISCVuzz] */
+	if ((insn & INSN_MASK_FENCE) == INSN_MATCH_FENCE) {
+		/* NOTE: Emulation should ideally preserve the `pred` and
+		 * `succ` fields, but that is not easily possible here. */
+		mb();
+		regs->mepc += 4;
+		return 0;
+	}
+	if ((insn & INSN_MASK_FENCE_I) == INSN_MATCH_FENCE_I) {
+		RISCV_FENCE_I;
+		regs->mepc += 4;
+		return 0;
+	}
+
 	return truly_illegal_insn(insn, regs);
 }
 
