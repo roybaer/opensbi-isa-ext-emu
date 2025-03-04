@@ -2,7 +2,7 @@
 #define __PSCI_H__
 
 #include <sbi/sbi_types.h>
-#include <spacemit/spacemit_config.h>
+#include "spacemit/spacemit_config.h"
 
 #define MPIDR_AFFLVL0_VAL(mpidr) \
                 (((mpidr) >> MPIDR_AFF0_SHIFT) & MPIDR_AFFINITY0_MASK)
