@@ -961,6 +961,8 @@ __pmp_skip:
 				    SBI_HART_EXT_ZICBOM, true);
 	__sbi_hart_update_extension(hfeatures,
 				    SBI_HART_EXT_ZICBOZ, true);
+	__sbi_hart_update_extension(hfeatures,
+				    SBI_HART_EXT_SVPBMT, true);
 
 	/* Mark hart feature detection done */
 	hfeatures->detected = true;
