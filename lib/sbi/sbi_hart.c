@@ -958,6 +958,8 @@ __pmp_skip:
 	
 	/* Spacemit K1 Hack */
 	__sbi_hart_update_extension(hfeatures,
+				    SBI_HART_EXT_ZICBOM, true);
+	__sbi_hart_update_extension(hfeatures,
 				    SBI_HART_EXT_ZICBOZ, true);
 
 	/* Mark hart feature detection done */
