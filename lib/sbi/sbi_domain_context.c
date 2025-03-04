@@ -13,7 +13,77 @@
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
+#include <sbi/sbi_domain.h>
 #include <sbi/sbi_domain_context.h>
+#include <sbi/sbi_trap.h>
+
+/** Context representation for a hart within a domain */
+struct hart_context {
+	/** Trap-related states such as GPRs, mepc, and mstatus */
+	struct sbi_trap_context trap_ctx;
+
+	/** Supervisor status register */
+	unsigned long sstatus;
+	/** Supervisor interrupt enable register */
+	unsigned long sie;
+	/** Supervisor trap vector base address register */
+	unsigned long stvec;
+	/** Supervisor scratch register for temporary storage */
+	unsigned long sscratch;
+	/** Supervisor exception program counter register */
+	unsigned long sepc;
+	/** Supervisor cause register */
+	unsigned long scause;
+	/** Supervisor trap value register */
+	unsigned long stval;
+	/** Supervisor interrupt pending register */
+	unsigned long sip;
+	/** Supervisor address translation and protection register */
+	unsigned long satp;
+	/** Counter-enable register */
+	unsigned long scounteren;
+	/** Supervisor environment configuration register */
+	unsigned long senvcfg;
+
+	/** Reference to the owning domain */
+	struct sbi_domain *dom;
+	/** Previous context (caller) to jump to during context exits */
+	struct hart_context *prev_ctx;
+	/** Is context initialized and runnable */
+	bool initialized;
+};
+
+struct domain_context_priv {
+	/** Contexts for possible HARTs indexed by hartindex */
+	struct hart_context *hartindex_to_context_table[SBI_HARTMASK_MAX_BITS];
+};
+
+static struct sbi_domain_data dcpriv = {
+	.data_size = sizeof(struct domain_context_priv),
+};
+
+static inline struct hart_context *hart_context_get(struct sbi_domain *dom,
+						    u32 hartindex)
+{
+	struct domain_context_priv *dcp = sbi_domain_data_ptr(dom, &dcpriv);
+
+	return (dcp && hartindex < SBI_HARTMASK_MAX_BITS) ?
+		dcp->hartindex_to_context_table[hartindex] : NULL;
+}
+
+static void hart_context_set(struct sbi_domain *dom, u32 hartindex,
+			     struct hart_context *hc)
+{
+	struct domain_context_priv *dcp = sbi_domain_data_ptr(dom, &dcpriv);
+
+	if (dcp && hartindex < SBI_HARTMASK_MAX_BITS)
+		dcp->hartindex_to_context_table[hartindex] = hc;
+}
+
+/** Macro to obtain the current hart's context pointer */
+#define hart_context_thishart_get()					\
+	hart_context_get(sbi_domain_thishart_ptr(),			\
+			 current_hartindex())
 
 /**
  * Switches the HART context from the current domain to the target domain.
@@ -23,11 +93,11 @@
  * @param ctx pointer to the current HART context
  * @param dom_ctx pointer to the target domain context
  */
-static void switch_to_next_domain_context(struct sbi_context *ctx,
-					  struct sbi_context *dom_ctx)
+static void switch_to_next_domain_context(struct hart_context *ctx,
+					  struct hart_context *dom_ctx)
 {
-	u32 hartindex = sbi_hartid_to_hartindex(current_hartid());
-	struct sbi_trap_regs *trap_regs;
+	u32 hartindex = current_hartindex();
+	struct sbi_trap_context *trap_ctx;
 	struct sbi_domain *current_dom = ctx->dom;
 	struct sbi_domain *target_dom = dom_ctx->dom;
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
@@ -66,10 +136,9 @@ static void switch_to_next_domain_context(struct sbi_context *ctx,
 		ctx->senvcfg	= csr_swap(CSR_SENVCFG, dom_ctx->senvcfg);
 
 	/* Save current trap state and restore target domain's trap state */
-	trap_regs = (struct sbi_trap_regs *)(csr_read(CSR_MSCRATCH) -
-					     SBI_TRAP_REGS_SIZE);
-	sbi_memcpy(&ctx->regs, trap_regs, sizeof(*trap_regs));
-	sbi_memcpy(trap_regs, &dom_ctx->regs, sizeof(*trap_regs));
+	trap_ctx = sbi_trap_get_context(scratch);
+	sbi_memcpy(&ctx->trap_ctx, trap_ctx, sizeof(*trap_ctx));
+	sbi_memcpy(trap_ctx, &dom_ctx->trap_ctx, sizeof(*trap_ctx));
 
 	/* Mark current context structure initialized because context saved */
 	ctx->initialized = true;
@@ -90,9 +159,8 @@ static void switch_to_next_domain_context(struct sbi_context *ctx,
 
 int sbi_domain_context_enter(struct sbi_domain *dom)
 {
-	struct sbi_context *ctx = sbi_domain_context_thishart_ptr();
-	struct sbi_context *dom_ctx = sbi_hartindex_to_domain_context(
-		sbi_hartid_to_hartindex(current_hartid()), dom);
+	struct hart_context *ctx = hart_context_thishart_get();
+	struct hart_context *dom_ctx = hart_context_get(dom, current_hartindex());
 
 	/* Validate the domain context existence */
 	if (!dom_ctx)
@@ -108,10 +176,10 @@ int sbi_domain_context_enter(struct sbi_domain *dom)
 
 int sbi_domain_context_exit(void)
 {
-	u32 i, hartindex = sbi_hartid_to_hartindex(current_hartid());
+	u32 hartindex = current_hartindex();
 	struct sbi_domain *dom;
-	struct sbi_context *ctx = sbi_domain_context_thishart_ptr();
-	struct sbi_context *dom_ctx, *tmp;
+	struct hart_context *ctx = hart_context_thishart_get();
+	struct hart_context *dom_ctx, *tmp;
 
 	/*
 	 * If it's first time to call `exit` on the current hart, no
@@ -119,21 +187,21 @@ int sbi_domain_context_exit(void)
 	 * its context on the current hart if valid.
 	 */
 	if (!ctx) {
-		sbi_domain_for_each(i, dom) {
+		sbi_domain_for_each(dom) {
 			if (!sbi_hartmask_test_hartindex(hartindex,
 							 dom->possible_harts))
 				continue;
 
-			dom_ctx = sbi_zalloc(sizeof(struct sbi_context));
+			dom_ctx = sbi_zalloc(sizeof(struct hart_context));
 			if (!dom_ctx)
 				return SBI_ENOMEM;
 
 			/* Bind context and domain */
-			dom_ctx->dom				   = dom;
-			dom->hartindex_to_context_table[hartindex] = dom_ctx;
+			dom_ctx->dom = dom;
+			hart_context_set(dom, hartindex, dom_ctx);
 		}
 
-		ctx = sbi_domain_context_thishart_ptr();
+		ctx = hart_context_thishart_get();
 	}
 
 	dom_ctx = ctx->prev_ctx;
@@ -141,11 +209,11 @@ int sbi_domain_context_exit(void)
 	/* If no previous caller context */
 	if (!dom_ctx) {
 		/* Try to find next uninitialized user-defined domain's context */
-		sbi_domain_for_each(i, dom) {
+		sbi_domain_for_each(dom) {
 			if (dom == &root || dom == sbi_domain_thishart_ptr())
 				continue;
 
-			tmp = sbi_hartindex_to_domain_context(hartindex, dom);
+			tmp = hart_context_get(dom, hartindex);
 			if (tmp && !tmp->initialized) {
 				dom_ctx = tmp;
 				break;
@@ -155,9 +223,19 @@ int sbi_domain_context_exit(void)
 
 	/* Take the root domain context if fail to find */
 	if (!dom_ctx)
-		dom_ctx = sbi_hartindex_to_domain_context(hartindex, &root);
+		dom_ctx = hart_context_get(&root, hartindex);
 
 	switch_to_next_domain_context(ctx, dom_ctx);
 
 	return 0;
+}
+
+int sbi_domain_context_init(void)
+{
+	return sbi_domain_register_data(&dcpriv);
+}
+
+void sbi_domain_context_deinit(void)
+{
+	sbi_domain_unregister_data(&dcpriv);
 }

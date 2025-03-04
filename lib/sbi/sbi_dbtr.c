@@ -47,13 +47,7 @@ static unsigned long hart_state_ptr_offset;
 	     _idx < _max;						\
 	     _idx++, _entry = ((_etype *)_base + _idx))
 
-#if __riscv_xlen == 64
 #define DBTR_SHMEM_MAKE_PHYS(_p_hi, _p_lo) (_p_lo)
-#elif __riscv_xlen == 32
-#define DBTR_SHMEM_MAKE_PHYS(_p_hi, _p_lo) (((u64)(_p_hi) << 32) | (_p_lo))
-#else
-#error "Undefined XLEN"
-#endif
 
 /* must call with hs != NULL */
 static inline bool sbi_dbtr_shmem_disabled(
@@ -173,11 +167,11 @@ int sbi_dbtr_init(struct sbi_scratch *scratch, bool coldboot)
 		goto _probed;
 
 	for (i = 0; i < RV_MAX_TRIGGERS; i++) {
-		csr_write_allowed(CSR_TSELECT, (ulong)&trap, i);
+		csr_write_allowed(CSR_TSELECT, &trap, i);
 		if (trap.cause)
 			break;
 
-		val = csr_read_allowed(CSR_TSELECT, (ulong)&trap);
+		val = csr_read_allowed(CSR_TSELECT, &trap);
 		if (trap.cause)
 			break;
 
@@ -188,7 +182,7 @@ int sbi_dbtr_init(struct sbi_scratch *scratch, bool coldboot)
 		if (val != i)
 			break;
 
-		val = csr_read_allowed(CSR_TINFO, (ulong)&trap);
+		val = csr_read_allowed(CSR_TINFO, &trap);
 		if (trap.cause) {
 			/*
 			 * If reading tinfo caused an exception, the
@@ -196,7 +190,7 @@ int sbi_dbtr_init(struct sbi_scratch *scratch, bool coldboot)
 			 * type.
 			 */
 			tdata1 = csr_read_allowed(CSR_TDATA1,
-						  (ulong)&trap);
+						  &trap);
 			if (trap.cause)
 				break;
 
@@ -249,10 +243,9 @@ int sbi_dbtr_setup_shmem(const struct sbi_domain *dom, unsigned long smode,
 			 unsigned long shmem_phys_lo,
 			 unsigned long shmem_phys_hi)
 {
-	u32 hartid = current_hartid();
 	struct sbi_dbtr_hart_triggers_state *hart_state;
 
-	if (dom && !sbi_domain_is_assigned_hart(dom, hartid)) {
+	if (dom && !sbi_domain_is_assigned_hart(dom, current_hartindex())) {
 		sbi_dprintf("%s: calling hart not assigned to this domain\n",
 			   __func__);
 		return SBI_ERR_DENIED;
@@ -276,6 +269,20 @@ int sbi_dbtr_setup_shmem(const struct sbi_domain *dom, unsigned long smode,
 	/* lower physical address must be XLEN/8 bytes aligned */
 	if (shmem_phys_lo & SBI_DBTR_SHMEM_ALIGN_MASK)
 		return SBI_ERR_INVALID_PARAM;
+
+	/*
+	* On RV32, the M-mode can only access the first 4GB of
+	* the physical address space because M-mode does not have
+	* MMU to access full 34-bit physical address space.
+	* So fail if the upper 32 bits of the physical address
+	* is non-zero on RV32.
+	*
+	* On RV64, kernel sets upper 64bit address part to zero.
+	* So fail if the upper 64bit of the physical address
+	* is non-zero on RV64.
+	*/
+	if (shmem_phys_hi)
+		return SBI_EINVALID_ADDR;
 
 	if (dom && !sbi_domain_check_addr(dom,
 		  DBTR_SHMEM_MAKE_PHYS(shmem_phys_hi, shmem_phys_lo), smode,
@@ -349,7 +356,7 @@ static void dbtr_trigger_enable(struct sbi_dbtr_trigger *trig)
 	unsigned long state;
 	unsigned long tdata1;
 
-	if (!trig && !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
+	if (!trig || !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
 		return;
 
 	state = trig->state;
@@ -395,7 +402,7 @@ static void dbtr_trigger_disable(struct sbi_dbtr_trigger *trig)
 {
 	unsigned long tdata1;
 
-	if (!trig && !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
+	if (!trig || !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
 		return;
 
 	tdata1 = trig->tdata1;
@@ -421,7 +428,7 @@ static void dbtr_trigger_disable(struct sbi_dbtr_trigger *trig)
 
 static void dbtr_trigger_clear(struct sbi_dbtr_trigger *trig)
 {
-	if (!trig && !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
+	if (!trig || !(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
 		return;
 
 	csr_write(CSR_TSELECT, trig->index);

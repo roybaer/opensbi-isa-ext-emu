@@ -7,7 +7,6 @@
 #include <sbi/riscv_asm.h>
 #include <sbi/riscv_encoding.h>
 #include <sbi/riscv_io.h>
-#include <sbi/sbi_console.h>
 #include <sbi/sbi_const.h>
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_platform.h>
@@ -40,6 +39,10 @@ static struct plic_data plic = {
 	.addr = ARIANE_PLIC_ADDR,
 	.size = ARIANE_PLIC_SIZE,
 	.num_src = ARIANE_PLIC_NUM_SOURCES,
+	.flags = PLIC_FLAG_ARIANE_BUG,
+	.context_map = {
+		[0] = { 0, 1 },
+	},
 };
 
 static struct aclint_mswi_data mswi = {
@@ -67,8 +70,15 @@ static struct aclint_mtimer_data mtimer = {
  */
 static int ariane_early_init(bool cold_boot)
 {
-	/* For now nothing to do. */
-	return 0;
+	if (!cold_boot)
+		return 0;
+
+	return uart8250_init(ARIANE_UART_ADDR,
+			     ARIANE_UART_FREQ,
+			     ARIANE_UART_BAUDRATE,
+			     ARIANE_UART_REG_SHIFT,
+			     ARIANE_UART_REG_WIDTH,
+			     ARIANE_UART_REG_OFFSET);
 }
 
 /*
@@ -81,92 +91,34 @@ static int ariane_final_init(bool cold_boot)
 	if (!cold_boot)
 		return 0;
 
-	fdt = fdt_get_address();
+	fdt = fdt_get_address_rw();
 	fdt_fixups(fdt);
 
 	return 0;
 }
 
 /*
- * Initialize the ariane console.
+ * Initialize the ariane interrupt controller during cold boot.
  */
-static int ariane_console_init(void)
+static int ariane_irqchip_init(void)
 {
-	return uart8250_init(ARIANE_UART_ADDR,
-			     ARIANE_UART_FREQ,
-			     ARIANE_UART_BAUDRATE,
-			     ARIANE_UART_REG_SHIFT,
-			     ARIANE_UART_REG_WIDTH,
-			     ARIANE_UART_REG_OFFSET);
-}
-
-static int plic_ariane_warm_irqchip_init(int m_cntx_id, int s_cntx_id)
-{
-	int ret;
-
-	/* By default, enable all IRQs for M-mode of target HART */
-	if (m_cntx_id > -1) {
-		ret = plic_context_init(&plic, m_cntx_id, true, 0x1);
-		if (ret)
-			return ret;
-	}
-
-	/* Enable all IRQs for S-mode of target HART */
-	if (s_cntx_id > -1) {
-		ret = plic_context_init(&plic, s_cntx_id, true, 0x0);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
+	return plic_cold_irqchip_init(&plic);
 }
 
 /*
- * Initialize the ariane interrupt controller for current HART.
+ * Initialize IPI during cold boot.
  */
-static int ariane_irqchip_init(bool cold_boot)
+static int ariane_ipi_init(void)
 {
-	u32 hartid = current_hartid();
-	int ret;
-
-	if (cold_boot) {
-		ret = plic_cold_irqchip_init(&plic);
-		if (ret)
-			return ret;
-	}
-	return plic_ariane_warm_irqchip_init(2 * hartid, 2 * hartid + 1);
+	return aclint_mswi_cold_init(&mswi);
 }
 
 /*
- * Initialize IPI for current HART.
+ * Initialize ariane timer during cold boot.
  */
-static int ariane_ipi_init(bool cold_boot)
+static int ariane_timer_init(void)
 {
-	int ret;
-
-	if (cold_boot) {
-		ret = aclint_mswi_cold_init(&mswi);
-		if (ret)
-			return ret;
-	}
-
-	return aclint_mswi_warm_init();
-}
-
-/*
- * Initialize ariane timer for current HART.
- */
-static int ariane_timer_init(bool cold_boot)
-{
-	int ret;
-
-	if (cold_boot) {
-		ret = aclint_mtimer_cold_init(&mtimer, NULL);
-		if (ret)
-			return ret;
-	}
-
-	return aclint_mtimer_warm_init();
+	return aclint_mtimer_cold_init(&mtimer, NULL);
 }
 
 /*
@@ -175,7 +127,6 @@ static int ariane_timer_init(bool cold_boot)
 const struct sbi_platform_operations platform_ops = {
 	.early_init = ariane_early_init,
 	.final_init = ariane_final_init,
-	.console_init = ariane_console_init,
 	.irqchip_init = ariane_irqchip_init,
 	.ipi_init = ariane_ipi_init,
 	.timer_init = ariane_timer_init,

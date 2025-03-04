@@ -16,8 +16,8 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/riscv_io.h>
+#include <sbi_utils/fdt/fdt_driver.h>
 #include <sbi_utils/fdt/fdt_helper.h>
-#include <sbi_utils/reset/fdt_reset.h>
 #include <sbi_utils/i2c/fdt_i2c.h>
 
 struct pmic {
@@ -186,9 +186,9 @@ static struct sbi_system_reset_device pm_reset = {
 	.system_reset = pm_system_reset
 };
 
-static int starfive_jh7110_inst_init(void *fdt);
+static int starfive_jh7110_inst_init(const void *fdt);
 
-static int pm_reset_init(void *fdt, int nodeoff,
+static int pm_reset_init(const void *fdt, int nodeoff,
 			 const struct fdt_match *match)
 {
 	int rc;
@@ -227,12 +227,17 @@ static const struct fdt_match pm_reset_match[] = {
 	{ },
 };
 
-static struct fdt_reset fdt_reset_pmic = {
+static const struct fdt_driver fdt_reset_pmic = {
 	.match_table = pm_reset_match,
 	.init = pm_reset_init,
 };
 
-static int starfive_jh7110_inst_init(void *fdt)
+static const struct fdt_driver *const starfive_jh7110_reset_drivers[] = {
+	&fdt_reset_pmic,
+	NULL
+};
+
+static int starfive_jh7110_inst_init(const void *fdt)
 {
 	int noff, rc = 0;
 	const fdt32_t *val;
@@ -277,13 +282,11 @@ err:
 	return rc;
 }
 
-static int starfive_jh7110_final_init(bool cold_boot,
+static int starfive_jh7110_final_init(bool cold_boot, void *fdt,
 				      const struct fdt_match *match)
 {
-	void *fdt = fdt_get_address();
-
 	if (cold_boot) {
-		fdt_reset_driver_init(fdt, &fdt_reset_pmic);
+		fdt_driver_init_one(fdt, starfive_jh7110_reset_drivers);
 	}
 
 	return 0;
@@ -298,7 +301,7 @@ static bool starfive_jh7110_cold_boot_allowed(u32 hartid,
 	return true;
 }
 
-static void starfive_jh7110_fw_init(void *fdt, const struct fdt_match *match)
+static void starfive_jh7110_fw_init(const void *fdt, const struct fdt_match *match)
 {
 	const fdt32_t *val;
 	int len, coff;

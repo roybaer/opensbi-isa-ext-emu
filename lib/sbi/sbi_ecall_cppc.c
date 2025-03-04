@@ -32,7 +32,13 @@ static int sbi_ecall_cppc_handler(unsigned long extid, unsigned long funcid,
 #endif
 		break;
 	case SBI_EXT_CPPC_WRITE:
-		ret = sbi_cppc_write(regs->a0, regs->a1);
+#if __riscv_xlen == 32
+		temp = regs->a2;
+		temp = (temp << 32) | regs->a1;
+#else
+		temp = regs->a1;
+#endif
+		ret = sbi_cppc_write(regs->a0, temp);
 		break;
 	case SBI_EXT_CPPC_PROBE:
 		ret = sbi_cppc_probe(regs->a0);
@@ -59,6 +65,7 @@ static int sbi_ecall_cppc_register_extensions(void)
 }
 
 struct sbi_ecall_extension ecall_cppc = {
+	.name			= "cppc",
 	.extid_start		= SBI_EXT_CPPC,
 	.extid_end		= SBI_EXT_CPPC,
 	.register_extensions	= sbi_ecall_cppc_register_extensions,

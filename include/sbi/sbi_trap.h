@@ -112,10 +112,13 @@
 /** Size (in bytes) of sbi_trap_info */
 #define SBI_TRAP_INFO_SIZE SBI_TRAP_INFO_OFFSET(last)
 
+#define STACK_BOUNDARY 16
+#define ALIGN_TO_BOUNDARY(x, a) (((x) + (a) - 1) & ~((a) - 1))
+
 /** Size (in bytes) of sbi_trap_context */
-#define SBI_TRAP_CONTEXT_SIZE (SBI_TRAP_REGS_SIZE + \
+#define SBI_TRAP_CONTEXT_SIZE ALIGN_TO_BOUNDARY((SBI_TRAP_REGS_SIZE + \
 			       SBI_TRAP_INFO_SIZE + \
-			       __SIZEOF_POINTER__)
+			       __SIZEOF_POINTER__), STACK_BOUNDARY)
 
 #ifndef __ASSEMBLER__
 
@@ -234,6 +237,20 @@ static inline unsigned long sbi_regs_gva(const struct sbi_trap_regs *regs)
 #else
 	return (regs->mstatus & MSTATUS_GVA) ? 1 : 0;
 #endif
+}
+
+static inline bool sbi_regs_from_virt(const struct sbi_trap_regs *regs)
+{
+#if __riscv_xlen == 32
+	return (regs->mstatusH & MSTATUSH_MPV) ? true : false;
+#else
+	return (regs->mstatus & MSTATUS_MPV) ? true : false;
+#endif
+}
+
+static inline int sbi_mstatus_prev_mode(unsigned long mstatus)
+{
+	return (mstatus & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT;
 }
 
 int sbi_trap_redirect(struct sbi_trap_regs *regs,

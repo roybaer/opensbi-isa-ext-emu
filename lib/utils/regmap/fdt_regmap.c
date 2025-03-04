@@ -13,46 +13,23 @@
 #include <sbi_utils/regmap/fdt_regmap.h>
 
 /* List of FDT regmap drivers generated at compile time */
-extern struct fdt_regmap *fdt_regmap_drivers[];
-extern unsigned long fdt_regmap_drivers_size;
+extern const struct fdt_driver *const fdt_regmap_drivers[];
 
-static int fdt_regmap_init(void *fdt, int nodeoff, u32 phandle)
-{
-	int pos, rc;
-	struct fdt_regmap *drv;
-	const struct fdt_match *match;
-
-	/* Try all I2C drivers one-by-one */
-	for (pos = 0; pos < fdt_regmap_drivers_size; pos++) {
-		drv = fdt_regmap_drivers[pos];
-		match = fdt_match_node(fdt, nodeoff, drv->match_table);
-		if (match && drv->init) {
-			rc = drv->init(fdt, nodeoff, phandle, match);
-			if (rc == SBI_ENODEV)
-				continue;
-			if (rc)
-				return rc;
-			return 0;
-		}
-	}
-
-	return SBI_ENOSYS;
-}
-
-static int fdt_regmap_find(void *fdt, int nodeoff, u32 phandle,
+static int fdt_regmap_find(const void *fdt, int nodeoff,
 			   struct regmap **out_rmap)
 {
 	int rc;
-	struct regmap *rmap = regmap_find(phandle);
+	struct regmap *rmap = regmap_find(nodeoff);
 
 	if (!rmap) {
 		/* Regmap not found so initialize matching driver */
-		rc = fdt_regmap_init(fdt, nodeoff, phandle);
+		rc = fdt_driver_init_by_offset(fdt, nodeoff,
+					       fdt_regmap_drivers);
 		if (rc)
 			return rc;
 
 		/* Try to find regmap again */
-		rmap = regmap_find(phandle);
+		rmap = regmap_find(nodeoff);
 		if (!rmap)
 			return SBI_ENOSYS;
 	}
@@ -63,7 +40,7 @@ static int fdt_regmap_find(void *fdt, int nodeoff, u32 phandle,
 	return 0;
 }
 
-int fdt_regmap_get_by_phandle(void *fdt, u32 phandle,
+int fdt_regmap_get_by_phandle(const void *fdt, u32 phandle,
 			      struct regmap **out_rmap)
 {
 	int pnodeoff;
@@ -75,10 +52,10 @@ int fdt_regmap_get_by_phandle(void *fdt, u32 phandle,
 	if (pnodeoff < 0)
 		return pnodeoff;
 
-	return fdt_regmap_find(fdt, pnodeoff, phandle, out_rmap);
+	return fdt_regmap_find(fdt, pnodeoff, out_rmap);
 }
 
-int fdt_regmap_get(void *fdt, int nodeoff, struct regmap **out_rmap)
+int fdt_regmap_get(const void *fdt, int nodeoff, struct regmap **out_rmap)
 {
 	int len;
 	const fdt32_t *val;

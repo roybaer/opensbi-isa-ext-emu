@@ -54,12 +54,12 @@ struct sbi_sse_cb_ops {
 	void (*disable_cb)(uint32_t event_id);
 };
 
-/* Set the callback operations for an event
- * @param event_id Event identifier (SBI_SSE_EVENT_*)
- * @param cb_ops Callback operations
+/* Add a supported event with associated callback operations
+ * @param event_id Event identifier (SBI_SSE_EVENT_* or a custom platform one)
+ * @param cb_ops Callback operations (Can be NULL if any)
  * @return 0 on success, error otherwise
  */
-int sbi_sse_set_cb_ops(uint32_t event_id, const struct sbi_sse_cb_ops *cb_ops);
+int sbi_sse_add_event(uint32_t event_id, const struct sbi_sse_cb_ops *cb_ops);
 
 /* Inject an event to the current hard
  * @param event_id Event identifier (SBI_SSE_EVENT_*)
@@ -78,6 +78,8 @@ void sbi_sse_exit(struct sbi_scratch *scratch);
 int sbi_sse_register(uint32_t event_id, unsigned long handler_entry_pc,
 		     unsigned long handler_entry_arg);
 int sbi_sse_unregister(uint32_t event_id);
+int sbi_sse_hart_mask(void);
+int sbi_sse_hart_unmask(void);
 int sbi_sse_enable(uint32_t event_id);
 int sbi_sse_disable(uint32_t event_id);
 int sbi_sse_complete(struct sbi_trap_regs *regs, struct sbi_ecall_return *out);

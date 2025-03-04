@@ -14,8 +14,8 @@
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_trap.h>
 
-#define BOOT_STATUS_LOTTERY_DONE	1
-#define BOOT_STATUS_BOOT_HART_DONE	2
+#define BOOT_LOTTERY_ACQUIRED		1
+#define BOOT_STATUS_BOOT_HART_DONE	1
 
 .macro	MOV_3R __d0, __s0, __d1, __s1, __d2, __s2
 	add	\__d0, \__s0, zero
@@ -29,6 +29,16 @@
 	add	\__d2, \__s2, zero
 	add	\__d3, \__s3, zero
 	add	\__d4, \__s4, zero
+.endm
+
+.macro CLEAR_MDT tmp
+#if __riscv_xlen == 32
+	li 	\tmp, MSTATUSH_MDT
+	csrc	CSR_MSTATUSH, \tmp
+#else
+	li 	\tmp, MSTATUS_MDT
+	csrc	CSR_MSTATUS, \tmp
+#endif
 .endm
 
 	.section .entry, "ax", %progbits
@@ -47,13 +57,15 @@ _start:
 	bne	a0, a6, _wait_for_boot_hart
 _try_lottery:
 	/* Jump to relocation wait loop if we don't get relocation lottery */
-	lla	a6, _boot_status
-	li	a7, BOOT_STATUS_LOTTERY_DONE
+	lla	a6, _boot_lottery
+	li	a7, BOOT_LOTTERY_ACQUIRED
 	amoswap.w a6, a7, (a6)
 	bnez	a6, _wait_for_boot_hart
 
 	/* relocate the global table content */
-	lla	t2, _fw_start
+	li	t0, FW_TEXT_START	/* link start */
+	lla	t1, _fw_start		/* load start */
+	sub	t2, t1, t0		/* load offset */
 	lla	t0, __rel_dyn_start
 	lla	t1, __rel_dyn_end
 	beq	t0, t1, _relocate_done
@@ -88,6 +100,14 @@ _bss_zero:
 	/* Setup temporary trap handler */
 	lla	s4, _start_hang
 	csrw	CSR_MTVEC, s4
+
+	/*
+	 * While at this point, trap handling is rudimentary, if a trap happens,
+	 * it will end up in _start_hang which is enough to hook up a GDB. Clear
+	 * MDT to avoid generating a double trap and thus entering a
+	 * critical-error state.
+	 */
+	CLEAR_MDT t0
 
 	/* Setup temporary stack */
 	lla	s4, _fw_end
@@ -216,6 +236,8 @@ _scratch_init:
 #endif
 	REG_S	a0, SBI_SCRATCH_OPTIONS_OFFSET(tp)
 	MOV_3R	a0, s0, a1, s1, a2, s2
+	/* Store hart index in scratch space */
+	REG_S	t1, SBI_SCRATCH_HARTINDEX_OFFSET(tp)
 	/* Move to next scratch space */
 	add	t1, t1, t2
 	blt	t1, s7, _scratch_init
@@ -240,30 +262,14 @@ _scratch_init:
 	beq	t1, a1, _fdt_reloc_done
 	/* t0 = source FDT start address */
 	add	t0, a1, zero
-	/* t2 = source FDT size in big-endian */
-#if __riscv_xlen > 32
-	lwu	t2, 4(t0)
-#else
-	lw	t2, 4(t0)
-#endif
-	/* t3 = bit[15:8] of FDT size */
-	add	t3, t2, zero
-	srli	t3, t3, 16
-	and	t3, t3, a4
+	/* t2 = source FDT size (convert from big-endian) */
+	lbu	t2, 7(t0)
+	lbu	t3, 6(t0)
+	lbu	t4, 5(t0)
+	lbu	t5, 4(t0)
 	slli	t3, t3, 8
-	/* t4 = bit[23:16] of FDT size */
-	add	t4, t2, zero
-	srli	t4, t4, 8
-	and	t4, t4, a4
 	slli	t4, t4, 16
-	/* t5 = bit[31:24] of FDT size */
-	add	t5, t2, zero
-	and	t5, t5, a4
 	slli	t5, t5, 24
-	/* t2 = bit[7:0] of FDT size */
-	srli	t2, t2, 24
-	and	t2, t2, a4
-	/* t2 = FDT size in little-endian */
 	or	t2, t2, t3
 	or	t2, t2, t4
 	or	t2, t2, t5
@@ -286,7 +292,7 @@ _fdt_reloc_done:
 	REG_S	t0, 0(t1)
 	j	_start_warm
 
-	/* waiting for boot hart to be done (_boot_status == 2) */
+	/* waiting for boot hart to be done (_boot_status == BOOT_STATUS_BOOT_HART_DONE) */
 _wait_for_boot_hart:
 	li	t0, BOOT_STATUS_BOOT_HART_DONE
 	lla	t1, _boot_status
@@ -360,6 +366,9 @@ _start_warm:
 _skip_trap_handler_hyp:
 	csrw	CSR_MTVEC, a4
 
+	/* Clear MDT here again for all harts */
+	CLEAR_MDT t0
+
 	/* Initialize SBI runtime */
 	csrr	a0, CSR_MSCRATCH
 	call	sbi_init
@@ -369,6 +378,8 @@ _skip_trap_handler_hyp:
 
 	.data
 	.align 3
+_boot_lottery:
+	RISCV_PTR	0
 _boot_status:
 	RISCV_PTR	0
 
@@ -555,6 +566,9 @@ memcmp:
 	li	t0, 0
 .endif
 	REG_S	t0, (SBI_TRAP_REGS_SIZE + SBI_TRAP_INFO_OFFSET(gva))(sp)
+
+	/* We are ready to take another trap, clear MDT */
+	CLEAR_MDT t0
 .endm
 
 .macro	TRAP_CALL_C_ROUTINE
@@ -597,15 +611,18 @@ memcmp:
 .endm
 
 .macro	TRAP_RESTORE_MEPC_MSTATUS have_mstatush
-	/* Restore MEPC and MSTATUS CSRs */
-	REG_L	t0, SBI_TRAP_REGS_OFFSET(mepc)(a0)
-	csrw	CSR_MEPC, t0
-	REG_L	t0, SBI_TRAP_REGS_OFFSET(mstatus)(a0)
-	csrw	CSR_MSTATUS, t0
+	/*
+	 * Restore MSTATUS and MEPC CSRs starting with MSTATUS/H to set MDT
+	 * flags since we can not take a trap now or MEPC would be cloberred
+	 */
 	.if \have_mstatush
 	REG_L	t0, SBI_TRAP_REGS_OFFSET(mstatusH)(a0)
 	csrw	CSR_MSTATUSH, t0
 	.endif
+	REG_L	t0, SBI_TRAP_REGS_OFFSET(mstatus)(a0)
+	csrw	CSR_MSTATUS, t0
+	REG_L	t0, SBI_TRAP_REGS_OFFSET(mepc)(a0)
+	csrw	CSR_MEPC, t0
 .endm
 
 .macro TRAP_RESTORE_A0_T0

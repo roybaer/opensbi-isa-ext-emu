@@ -19,6 +19,7 @@
 #include <sbi/sbi_ipi.h>
 #include <sbi/sbi_init.h>
 #include <andes/andes.h>
+#include <andes/andes_sbi.h>
 
 static struct smu_data smu = { 0 };
 extern void __ae350_enable_coherency_warmboot(void);
@@ -26,13 +27,15 @@ extern void __ae350_disable_coherency(void);
 
 static int ae350_hart_start(u32 hartid, ulong saddr)
 {
+	u32 hartindex = sbi_hartid_to_hartindex(hartid);
+
 	/*
 	 * Don't send wakeup command when:
 	 * 1) boot-time
 	 * 2) the target hart is non-sleepable 25-series hart0
 	 */
-	if (!sbi_init_count(hartid) || (is_andes(25) && hartid == 0))
-		return sbi_ipi_raw_send(sbi_hartid_to_hartindex(hartid));
+	if (!sbi_init_count(hartindex) || (is_andes(25) && hartid == 0))
+		return sbi_ipi_raw_send(hartindex);
 
 	/* Write wakeup command to the sleep hart */
 	smu_set_command(&smu, WAKEUP_CMD, hartid);
@@ -87,12 +90,9 @@ static const struct sbi_hsm_device andes_smu = {
 	.hart_stop    = ae350_hart_stop,
 };
 
-static void ae350_hsm_device_init(void)
+static void ae350_hsm_device_init(const void *fdt)
 {
 	int rc;
-	void *fdt;
-
-	fdt = fdt_get_address();
 
 	rc = fdt_parse_compat_addr(fdt, (uint64_t *)&smu.addr,
 				   "andestech,atcsmu");
@@ -102,10 +102,11 @@ static void ae350_hsm_device_init(void)
 	}
 }
 
-static int ae350_final_init(bool cold_boot, const struct fdt_match *match)
+static int ae350_final_init(bool cold_boot, void *fdt,
+			    const struct fdt_match *match)
 {
 	if (cold_boot)
-		ae350_hsm_device_init();
+		ae350_hsm_device_init(fdt);
 
 	return 0;
 }
@@ -120,4 +121,5 @@ const struct platform_override andes_ae350 = {
 	.final_init  = ae350_final_init,
 	.extensions_init = andes_pmu_extensions_init,
 	.pmu_init = andes_pmu_init,
+	.vendor_ext_provider = andes_sbi_vendor_ext_provider,
 };

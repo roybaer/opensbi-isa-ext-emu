@@ -111,18 +111,11 @@ struct sbi_platform_operations {
 	/** Get platform specific mhpmevent value */
 	uint64_t (*pmu_xlate_to_mhpmevent)(uint32_t event_idx, uint64_t data);
 
-	/** Initialize the platform console */
-	int (*console_init)(void);
+	/** Initialize the platform interrupt controller during cold boot */
+	int (*irqchip_init)(void);
 
-	/** Initialize the platform interrupt controller for current HART */
-	int (*irqchip_init)(bool cold_boot);
-	/** Exit the platform interrupt controller for current HART */
-	void (*irqchip_exit)(void);
-
-	/** Initialize IPI for current HART */
-	int (*ipi_init)(bool cold_boot);
-	/** Exit IPI for current HART */
-	void (*ipi_exit)(void);
+	/** Initialize IPI during cold boot */
+	int (*ipi_init)(void);
 
 	/** Get tlb flush limit value **/
 	u64 (*get_tlbr_flush_limit)(void);
@@ -130,10 +123,11 @@ struct sbi_platform_operations {
 	/** Get tlb fifo num entries*/
 	u32 (*get_tlb_num_entries)(void);
 
-	/** Initialize platform timer for current HART */
-	int (*timer_init)(bool cold_boot);
-	/** Exit platform timer for current HART */
-	void (*timer_exit)(void);
+	/** Initialize platform timer during cold boot */
+	int (*timer_init)(void);
+
+	/** Initialize the platform Message Proxy(MPXY) driver */
+	int (*mpxy_init)(void);
 
 	/** Check if SBI vendor extension is implemented or not */
 	bool (*vendor_ext_check)(void);
@@ -155,7 +149,7 @@ struct sbi_platform_operations {
 
 /** Platform default heap size */
 #define SBI_PLATFORM_DEFAULT_HEAP_SIZE(__num_hart)	\
-					(0x8000 + 0x800 * (__num_hart))
+					(0x8000 + 0x1000 * (__num_hart))
 
 /** Representation of a platform */
 struct sbi_platform {
@@ -550,98 +544,59 @@ static inline uint64_t sbi_platform_pmu_xlate_to_mhpmevent(const struct sbi_plat
 }
 
 /**
- * Initialize the platform console
+ * Initialize the platform interrupt controller during cold boot
  *
  * @param plat pointer to struct sbi_platform
  *
  * @return 0 on success and negative error code on failure
  */
-static inline int sbi_platform_console_init(const struct sbi_platform *plat)
-{
-	if (plat && sbi_platform_ops(plat)->console_init)
-		return sbi_platform_ops(plat)->console_init();
-	return 0;
-}
-
-/**
- * Initialize the platform interrupt controller for current HART
- *
- * @param plat pointer to struct sbi_platform
- * @param cold_boot whether cold boot (true) or warm_boot (false)
- *
- * @return 0 on success and negative error code on failure
- */
-static inline int sbi_platform_irqchip_init(const struct sbi_platform *plat,
-					    bool cold_boot)
+static inline int sbi_platform_irqchip_init(const struct sbi_platform *plat)
 {
 	if (plat && sbi_platform_ops(plat)->irqchip_init)
-		return sbi_platform_ops(plat)->irqchip_init(cold_boot);
+		return sbi_platform_ops(plat)->irqchip_init();
 	return 0;
 }
 
 /**
- * Exit the platform interrupt controller for current HART
+ * Initialize the platform IPI support during cold boot
  *
  * @param plat pointer to struct sbi_platform
- */
-static inline void sbi_platform_irqchip_exit(const struct sbi_platform *plat)
-{
-	if (plat && sbi_platform_ops(plat)->irqchip_exit)
-		sbi_platform_ops(plat)->irqchip_exit();
-}
-
-/**
- * Initialize the platform IPI support for current HART
- *
- * @param plat pointer to struct sbi_platform
- * @param cold_boot whether cold boot (true) or warm_boot (false)
  *
  * @return 0 on success and negative error code on failure
  */
-static inline int sbi_platform_ipi_init(const struct sbi_platform *plat,
-					bool cold_boot)
+static inline int sbi_platform_ipi_init(const struct sbi_platform *plat)
 {
 	if (plat && sbi_platform_ops(plat)->ipi_init)
-		return sbi_platform_ops(plat)->ipi_init(cold_boot);
+		return sbi_platform_ops(plat)->ipi_init();
 	return 0;
 }
 
 /**
- * Exit the platform IPI support for current HART
+ * Initialize the platform timer during cold boot
  *
  * @param plat pointer to struct sbi_platform
- */
-static inline void sbi_platform_ipi_exit(const struct sbi_platform *plat)
-{
-	if (plat && sbi_platform_ops(plat)->ipi_exit)
-		sbi_platform_ops(plat)->ipi_exit();
-}
-
-/**
- * Initialize the platform timer for current HART
- *
- * @param plat pointer to struct sbi_platform
- * @param cold_boot whether cold boot (true) or warm_boot (false)
  *
  * @return 0 on success and negative error code on failure
  */
-static inline int sbi_platform_timer_init(const struct sbi_platform *plat,
-					  bool cold_boot)
+static inline int sbi_platform_timer_init(const struct sbi_platform *plat)
 {
 	if (plat && sbi_platform_ops(plat)->timer_init)
-		return sbi_platform_ops(plat)->timer_init(cold_boot);
+		return sbi_platform_ops(plat)->timer_init();
 	return 0;
 }
 
 /**
- * Exit the platform timer for current HART
+ * Initialize the platform Message Proxy drivers
  *
  * @param plat pointer to struct sbi_platform
+ *
+ * @return 0 on success and negative error code on failure
  */
-static inline void sbi_platform_timer_exit(const struct sbi_platform *plat)
+static inline int sbi_platform_mpxy_init(const struct sbi_platform *plat)
 {
-	if (plat && sbi_platform_ops(plat)->timer_exit)
-		sbi_platform_ops(plat)->timer_exit();
+	if (plat && sbi_platform_ops(plat)->mpxy_init)
+		return sbi_platform_ops(plat)->mpxy_init();
+	return 0;
 }
 
 /**

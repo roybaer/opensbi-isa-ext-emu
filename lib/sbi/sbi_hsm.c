@@ -46,6 +46,11 @@ struct sbi_hsm_data {
 	unsigned long suspend_type;
 	unsigned long saved_mie;
 	unsigned long saved_mip;
+	unsigned long saved_medeleg;
+	unsigned long saved_menvcfg;
+#if __riscv_xlen == 32
+	unsigned long saved_menvcfgh;
+#endif
 	atomic_t start_ticket;
 };
 
@@ -57,12 +62,12 @@ bool sbi_hsm_hart_change_state(struct sbi_scratch *scratch, long oldstate,
 	return __sbi_hsm_hart_change_state(hdata, oldstate, newstate);
 }
 
-int __sbi_hsm_hart_get_state(u32 hartid)
+int __sbi_hsm_hart_get_state(u32 hartindex)
 {
 	struct sbi_hsm_data *hdata;
 	struct sbi_scratch *scratch;
 
-	scratch = sbi_hartid_to_scratch(hartid);
+	scratch = sbi_hartindex_to_scratch(hartindex);
 	if (!scratch)
 		return SBI_EINVAL;
 
@@ -72,10 +77,12 @@ int __sbi_hsm_hart_get_state(u32 hartid)
 
 int sbi_hsm_hart_get_state(const struct sbi_domain *dom, u32 hartid)
 {
-	if (!sbi_domain_is_assigned_hart(dom, hartid))
+	u32 hartindex = sbi_hartid_to_hartindex(hartid);
+
+	if (!sbi_domain_is_assigned_hart(dom, hartindex))
 		return SBI_EINVAL;
 
-	return __sbi_hsm_hart_get_state(hartid);
+	return __sbi_hsm_hart_get_state(hartindex);
 }
 
 #ifdef CONFIG_ARM_PSCI_SUPPORT
@@ -120,34 +127,27 @@ static void hsm_start_ticket_release(struct sbi_hsm_data *hdata)
 }
 
 /**
- * Get ulong HART mask for given HART base ID
+ * Get the mask of harts which are valid IPI targets
  * @param dom the domain to be used for output HART mask
- * @param hbase the HART base ID
- * @param out_hmask the output ulong HART mask
+ * @param mask the output hartmask to fill
  * @return 0 on success and SBI_Exxx (< 0) on failure
- * Note: the output HART mask will be set to zero on failure as well.
  */
 int sbi_hsm_hart_interruptible_mask(const struct sbi_domain *dom,
-				    ulong hbase, ulong *out_hmask)
+				    struct sbi_hartmask *mask)
 {
-	int hstate;
-	ulong i, hmask, dmask;
+	int hstate, ret;
+	u32 i;
 
-	*out_hmask = 0;
-	if (!sbi_hartid_valid(hbase))
-		return SBI_EINVAL;
+	ret = sbi_domain_get_assigned_hartmask(dom, mask);
+	if (ret)
+		return ret;
 
-	dmask = sbi_domain_get_assigned_hartmask(dom, hbase);
-	for (i = 0; i < BITS_PER_LONG; i++) {
-		hmask = 1UL << i;
-		if (!(dmask & hmask))
-			continue;
-
-		hstate = __sbi_hsm_hart_get_state(hbase + i);
-		if (hstate == SBI_HSM_STATE_STARTED ||
-		    hstate == SBI_HSM_STATE_SUSPENDED ||
-		    hstate == SBI_HSM_STATE_RESUME_PENDING)
-			*out_hmask |= hmask;
+	sbi_hartmask_for_each_hartindex(i, mask) {
+		hstate = __sbi_hsm_hart_get_state(i);
+		if (hstate != SBI_HSM_STATE_STARTED &&
+		    hstate != SBI_HSM_STATE_SUSPENDED &&
+		    hstate != SBI_HSM_STATE_RESUME_PENDING)
+			sbi_hartmask_clear_hartindex(i, mask);
 	}
 
 	return 0;
@@ -189,7 +189,7 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
 }
 
 #ifdef CONFIG_ARM_PSCI_SUPPORT
-static void sbi_hsm_hart_wait(struct sbi_scratch *scratch, u32 hartid)
+static void sbi_hsm_hart_wait(struct sbi_scratch *scratch)
 {
 	struct sbi_hsm_data *hdata = sbi_scratch_offset_ptr(scratch,
 							    hart_data_offset);
@@ -265,10 +265,10 @@ static int hsm_device_hart_stop(void)
 	return SBI_ENOTSUPP;
 }
 
-static int hsm_device_hart_suspend(u32 suspend_type)
+static int hsm_device_hart_suspend(u32 suspend_type, ulong mmode_resume_addr)
 {
 	if (hsm_dev && hsm_dev->hart_suspend)
-		return hsm_dev->hart_suspend(suspend_type);
+		return hsm_dev->hart_suspend(suspend_type, mmode_resume_addr);
 	return SBI_ENOTSUPP;
 }
 
@@ -278,7 +278,7 @@ static void hsm_device_hart_resume(void)
 		hsm_dev->hart_resume();
 }
 
-int sbi_hsm_init(struct sbi_scratch *scratch, u32 hartid, bool cold_boot)
+int sbi_hsm_init(struct sbi_scratch *scratch, bool cold_boot)
 {
 	u32 i;
 	struct sbi_scratch *rscratch;
@@ -298,13 +298,13 @@ int sbi_hsm_init(struct sbi_scratch *scratch, u32 hartid, bool cold_boot)
 			hdata = sbi_scratch_offset_ptr(rscratch,
 						       hart_data_offset);
 			ATOMIC_INIT(&hdata->state,
-				    (sbi_hartindex_to_hartid(i) == hartid) ?
+				    (i == current_hartindex()) ?
 				    SBI_HSM_STATE_START_PENDING :
 				    SBI_HSM_STATE_STOPPED);
 			ATOMIC_INIT(&hdata->start_ticket, 0);
 		}
 	} else {
-		sbi_hsm_hart_wait(scratch, hartid);
+		sbi_hsm_hart_wait(scratch);
 	}
 
 	return 0;
@@ -342,6 +342,7 @@ int sbi_hsm_hart_start(struct sbi_scratch *scratch,
 		       const struct sbi_domain *dom,
 		       u32 hartid, ulong saddr, ulong smode, ulong arg1)
 {
+	u32 hartindex = sbi_hartid_to_hartindex(hartid);
 	unsigned long init_count, entry_count;
 	unsigned int hstate;
 	struct sbi_scratch *rscratch;
@@ -351,13 +352,13 @@ int sbi_hsm_hart_start(struct sbi_scratch *scratch,
 	/* For now, we only allow start mode to be S-mode or U-mode. */
 	if (smode != PRV_S && smode != PRV_U)
 		return SBI_EINVAL;
-	if (dom && !sbi_domain_is_assigned_hart(dom, hartid))
+	if (dom && !sbi_domain_is_assigned_hart(dom, hartindex))
 		return SBI_EINVAL;
 	if (dom && !sbi_domain_check_addr(dom, saddr, smode,
 					  SBI_DOMAIN_EXECUTE))
 		return SBI_EINVALID_ADDR;
 
-	rscratch = sbi_hartid_to_scratch(hartid);
+	rscratch = sbi_hartindex_to_scratch(hartindex);
 	if (!rscratch)
 		return SBI_EINVAL;
 
@@ -365,8 +366,8 @@ int sbi_hsm_hart_start(struct sbi_scratch *scratch,
 	if (!hsm_start_ticket_acquire(hdata))
 		return SBI_EINVAL;
 
-	init_count = sbi_init_count(hartid);
-	entry_count = sbi_entry_count(hartid);
+	init_count = sbi_init_count(hartindex);
+	entry_count = sbi_entry_count(hartindex);
 
 	rscratch->next_arg1 = arg1;
 	rscratch->next_addr = saddr;
@@ -397,7 +398,7 @@ int sbi_hsm_hart_start(struct sbi_scratch *scratch,
 	   (hsm_device_has_hart_secondary_boot() && !init_count)) {
 		rc = hsm_device_hart_start(hartid, scratch->warmboot_addr);
 	} else {
-		rc = sbi_ipi_raw_send(sbi_hartid_to_hartindex(hartid));
+		rc = sbi_ipi_raw_send(hartindex);
 	}
 
 	if (!rc)
@@ -459,6 +460,13 @@ void __sbi_hsm_suspend_non_ret_save(struct sbi_scratch *scratch)
 
 	hdata->saved_mie = csr_read(CSR_MIE);
 	hdata->saved_mip = csr_read(CSR_MIP) & (MIP_SSIP | MIP_STIP);
+	hdata->saved_medeleg = csr_read(CSR_MEDELEG);
+	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
+#if __riscv_xlen == 32
+		hdata->saved_menvcfgh = csr_read(CSR_MENVCFGH);
+#endif
+		hdata->saved_menvcfg = csr_read(CSR_MENVCFG);
+	}
 }
 
 static void __sbi_hsm_suspend_non_ret_restore(struct sbi_scratch *scratch)
@@ -466,6 +474,13 @@ static void __sbi_hsm_suspend_non_ret_restore(struct sbi_scratch *scratch)
 	struct sbi_hsm_data *hdata = sbi_scratch_offset_ptr(scratch,
 							    hart_data_offset);
 
+	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
+		csr_write(CSR_MENVCFG, hdata->saved_menvcfg);
+#if __riscv_xlen == 32
+		csr_write(CSR_MENVCFGH, hdata->saved_menvcfgh);
+#endif
+	}
+	csr_write(CSR_MEDELEG, hdata->saved_medeleg);
 	csr_write(CSR_MIE, hdata->saved_mie);
 	csr_set(CSR_MIP, (hdata->saved_mip & (MIP_SSIP | MIP_STIP)));
 }
@@ -559,7 +574,7 @@ int sbi_hsm_hart_suspend(struct sbi_scratch *scratch, u32 suspend_type,
 		__sbi_hsm_suspend_non_ret_save(scratch);
 
 	/* Try platform specific suspend */
-	ret = hsm_device_hart_suspend(suspend_type);
+	ret = hsm_device_hart_suspend(suspend_type, scratch->warmboot_addr);
 	if (ret == SBI_ENOTSUPP) {
 		/* Try generic implementation of default suspend types */
 		if (suspend_type == SBI_HSM_SUSPEND_RET_DEFAULT ||

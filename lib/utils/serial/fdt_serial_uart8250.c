@@ -11,7 +11,7 @@
 #include <sbi_utils/serial/fdt_serial.h>
 #include <sbi_utils/serial/uart8250.h>
 
-static int serial_uart8250_init(void *fdt, int nodeoff,
+static int serial_uart8250_init(const void *fdt, int nodeoff,
 				const struct fdt_match *match)
 {
 	int rc;
@@ -33,7 +33,7 @@ static const struct fdt_match serial_uart8250_match[] = {
 	{ },
 };
 
-struct fdt_serial fdt_serial_uart8250 = {
+const struct fdt_driver fdt_serial_uart8250 = {
 	.match_table = serial_uart8250_match,
 	.init = serial_uart8250_init,
 };

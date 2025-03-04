@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
-menu "SBI Extension Support"
+menu "Generic SBI Support"
+
+config CONSOLE_EARLY_BUFFER_SIZE
+	int "Early console buffer size (bytes)"
+	default 256
 
 config SBI_ECALL_TIME
 	bool "Timer extension"
@@ -38,6 +42,10 @@ config SBI_ECALL_CPPC
 	bool "CPPC extension"
 	default y
 
+config SBI_ECALL_FWFT
+	bool "Firmware Feature extension"
+	default y
+
 config SBI_ECALL_LEGACY
 	bool "SBI v0.1 legacy extensions"
 	default y
@@ -58,4 +66,7 @@ config SBI_ECALL_SSE
 	bool "SSE extension"
 	default y
 
+config SBI_ECALL_MPXY
+	bool "MPXY extension"
+	default y
 endmenu

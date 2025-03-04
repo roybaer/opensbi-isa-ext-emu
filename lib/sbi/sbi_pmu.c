@@ -10,6 +10,7 @@
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_bitops.h>
 #include <sbi/sbi_console.h>
+#include <sbi/sbi_domain.h>
 #include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_heap.h>
@@ -172,6 +173,7 @@ static int pmu_event_validate(struct sbi_pmu_hart_state *phs,
 			return SBI_EINVAL;
 		break;
 	case SBI_PMU_EVENT_TYPE_HW_RAW:
+	case SBI_PMU_EVENT_TYPE_HW_RAW_V2:
 		event_idx_code_max = 1; // event_idx.code should be zero
 		break;
 	default:
@@ -259,7 +261,8 @@ static int pmu_add_hw_event_map(u32 eidx_start, u32 eidx_end, u32 cmap,
 
 	/* Sanity check */
 	for (i = 0; i < num_hw_events; i++) {
-		if (eidx_start == SBI_PMU_EVENT_RAW_IDX)
+		if (eidx_start == SBI_PMU_EVENT_RAW_IDX ||
+			eidx_start == SBI_PMU_EVENT_RAW_V2_IDX)
 		/* All raw events have same event idx. Just do sanity check on select */
 			is_overlap = pmu_event_select_overlap(&hw_event_map[i],
 							      select, select_mask);
@@ -290,8 +293,8 @@ reset_event:
  */
 int sbi_pmu_add_hw_event_counter_map(u32 eidx_start, u32 eidx_end, u32 cmap)
 {
-	if ((eidx_start > eidx_end) || eidx_start == SBI_PMU_EVENT_RAW_IDX ||
-	     eidx_end == SBI_PMU_EVENT_RAW_IDX)
+	if ((eidx_start > eidx_end) || eidx_start >= SBI_PMU_EVENT_RAW_IDX ||
+	     eidx_end >= SBI_PMU_EVENT_RAW_IDX)
 		return SBI_EINVAL;
 
 	return pmu_add_hw_event_map(eidx_start, eidx_end, cmap, 0, 0);
@@ -300,16 +303,16 @@ int sbi_pmu_add_hw_event_counter_map(u32 eidx_start, u32 eidx_end, u32 cmap)
 int sbi_pmu_add_raw_event_counter_map(uint64_t select, uint64_t select_mask, u32 cmap)
 {
 	return pmu_add_hw_event_map(SBI_PMU_EVENT_RAW_IDX,
-				    SBI_PMU_EVENT_RAW_IDX, cmap, select, select_mask);
+				    SBI_PMU_EVENT_RAW_V2_IDX, cmap, select, select_mask);
 }
 
 void sbi_pmu_ovf_irq()
 {
 	/*
-	 * We need to disable LCOFIP before returning to S-mode or we will loop
-	 * on LCOFIP being triggered
+	 * We need to disable the overflow irq before returning to S-mode or we will loop
+	 * on an irq being triggered
 	 */
-	csr_clear(CSR_MIE, MIP_LCOFIP);
+	csr_clear(CSR_MIE, sbi_pmu_irq_mask());
 	sbi_sse_inject_event(SBI_SSE_EVENT_LOCAL_PMU);
 }
 
@@ -341,7 +344,7 @@ static int pmu_ctr_enable_irq_hw(int ctr_idx)
 	 * Otherwise, there will be race conditions where we may clear the bit
 	 * the software is yet to handle the interrupt.
 	 */
-	if (!(mip_val & MIP_LCOFIP)) {
+	if (!(mip_val & sbi_pmu_irq_mask())) {
 		mhpmevent_curr &= of_mask;
 		csr_write_num(mhpmevent_csr, mhpmevent_curr);
 	}
@@ -402,11 +405,21 @@ int sbi_pmu_irq_bit(void)
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 
 	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SSCOFPMF))
-		return MIP_LCOFIP;
+		return IRQ_PMU_OVF;
 	if (pmu_dev && pmu_dev->hw_counter_irq_bit)
 		return pmu_dev->hw_counter_irq_bit();
 
-	return 0;
+	return -1;
+}
+
+unsigned long sbi_pmu_irq_mask(void)
+{
+	int irq_bit = sbi_pmu_irq_bit();
+
+	if (irq_bit < 0)
+		return 0;
+
+	return BIT(irq_bit);
 }
 
 static int pmu_ctr_start_fw(struct sbi_pmu_hart_state *phs,
@@ -588,9 +601,9 @@ int sbi_pmu_ctr_stop(unsigned long cbase, unsigned long cmask,
 		}
 	}
 
-	/* Clear MIP_LCOFIP to avoid spurious interrupts */
+	/* Clear PMU overflow interrupt to avoid spurious ones */
 	if (phs->sse_enabled)
-		csr_clear(CSR_MIP, MIP_LCOFIP);
+		csr_clear(CSR_MIP, sbi_pmu_irq_mask());
 
 	return ret;
 }
@@ -760,7 +773,8 @@ static int pmu_ctr_find_hw(struct sbi_pmu_hart_state *phs,
 			continue;
 
 		/* For raw events, event data is used as the select value */
-		if (event_idx == SBI_PMU_EVENT_RAW_IDX) {
+		if (event_idx == SBI_PMU_EVENT_RAW_IDX ||
+			event_idx == SBI_PMU_EVENT_RAW_V2_IDX) {
 			uint64_t select_mask = temp->select_mask;
 
 			/* The non-event map bits of data should match the selector */
@@ -815,11 +829,6 @@ static int pmu_ctr_find_fw(struct sbi_pmu_hart_state *phs,
 			   uint32_t event_code, uint64_t edata)
 {
 	int i, cidx;
-
-	if ((event_code >= SBI_PMU_FW_MAX &&
-	    event_code <= SBI_PMU_FW_RESERVED_MAX) ||
-	    event_code > SBI_PMU_FW_PLATFORM)
-		return SBI_EINVAL;
 
 	for_each_set_bit(i, &cmask, BITS_PER_LONG) {
 		cidx = i + cbase;
@@ -993,6 +1002,80 @@ int sbi_pmu_ctr_get_info(uint32_t cidx, unsigned long *ctr_info)
 	return 0;
 }
 
+int sbi_pmu_event_get_info(unsigned long shmem_phys_lo, unsigned long shmem_phys_hi,
+			   unsigned long num_events, unsigned long flags)
+{
+	unsigned long shmem_size = num_events * sizeof(struct sbi_pmu_event_info);
+	int i, j, event_type;
+	struct sbi_pmu_event_info *einfo;
+	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
+	uint32_t event_idx;
+	struct sbi_pmu_hw_event *temp;
+	bool found = false;
+
+	if (flags != 0)
+		return SBI_ERR_INVALID_PARAM;
+
+	/** Check shared memory size and address aligned to 16 byte */
+	if (!num_events || (shmem_phys_lo & 0xF))
+		return SBI_ERR_INVALID_PARAM;
+
+	/*
+	 * On RV32, the M-mode can only access the first 4GB of
+	 * the physical address space because M-mode does not have
+	 * MMU to access full 34-bit physical address space.
+	 *
+	 * Based on above, we simply fail if the upper 32bits of
+	 * the physical address (i.e. a2 register) is non-zero on
+	 * RV32.
+	 */
+	if (shmem_phys_hi)
+		return SBI_EINVALID_ADDR;
+
+	if (!sbi_domain_check_addr_range(sbi_domain_thishart_ptr(),
+					 shmem_phys_lo, shmem_size, PRV_S,
+					 SBI_DOMAIN_READ | SBI_DOMAIN_WRITE))
+		return SBI_ERR_INVALID_ADDRESS;
+
+	sbi_hart_map_saddr(shmem_phys_lo, shmem_size);
+
+	einfo = (struct sbi_pmu_event_info *)(shmem_phys_lo);
+	for (i = 0; i < num_events; i++) {
+		event_idx = einfo[i].event_idx;
+		event_type = pmu_event_validate(phs, event_idx, einfo[i].event_data);
+		if (event_type < 0) {
+			einfo[i].output = 0;
+		} else {
+			for (j = 0; j < num_hw_events; j++) {
+				temp = &hw_event_map[j];
+				/* For raw events, event data is used as the select value */
+				if (event_idx == SBI_PMU_EVENT_RAW_IDX ||
+					event_idx == SBI_PMU_EVENT_RAW_V2_IDX) {
+					/* just match the selector */
+					if (temp->select == (einfo[i].event_data &
+									temp->select_mask)) {
+						found = true;
+						break;
+					}
+				} else if (temp->start_idx <= event_idx &&
+					   event_idx <= temp->end_idx) {
+					found = true;
+					break;
+				}
+			}
+			if (found)
+				einfo[i].output = 1;
+			else
+				einfo[i].output = 0;
+			found = false;
+		}
+	}
+
+	sbi_hart_unmap_saddr();
+
+	return 0;
+}
+
 static void pmu_reset_event_map(struct sbi_pmu_hart_state *phs)
 {
 	int j;
@@ -1038,26 +1121,28 @@ void sbi_pmu_exit(struct sbi_scratch *scratch)
 static void pmu_sse_enable(uint32_t event_id)
 {
 	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
+	unsigned long irq_mask = sbi_pmu_irq_mask();
 
 	phs->sse_enabled = true;
-	csr_clear(CSR_MIDELEG, sbi_pmu_irq_bit());
-	csr_clear(CSR_MIP, MIP_LCOFIP);
-	csr_set(CSR_MIE, MIP_LCOFIP);
+	csr_clear(CSR_MIDELEG, irq_mask);
+	csr_clear(CSR_MIP, irq_mask);
+	csr_set(CSR_MIE, irq_mask);
 }
 
 static void pmu_sse_disable(uint32_t event_id)
 {
 	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
+	unsigned long irq_mask = sbi_pmu_irq_mask();
 
-	csr_clear(CSR_MIE, MIP_LCOFIP);
-	csr_clear(CSR_MIP, MIP_LCOFIP);
-	csr_set(CSR_MIDELEG, sbi_pmu_irq_bit());
+	csr_clear(CSR_MIE, irq_mask);
+	csr_clear(CSR_MIP, irq_mask);
+	csr_set(CSR_MIDELEG, irq_mask);
 	phs->sse_enabled = false;
 }
 
 static void pmu_sse_complete(uint32_t event_id)
 {
-	csr_set(CSR_MIE, MIP_LCOFIP);
+	csr_set(CSR_MIE, sbi_pmu_irq_mask());
 }
 
 static const struct sbi_sse_cb_ops pmu_sse_cb_ops = {
@@ -1103,9 +1188,10 @@ int sbi_pmu_init(struct sbi_scratch *scratch, bool cold_boot)
 			return SBI_EINVAL;
 
 		total_ctrs = num_hw_ctrs + SBI_PMU_FW_CTR_MAX;
-	}
 
-	sbi_sse_set_cb_ops(SBI_SSE_EVENT_LOCAL_PMU, &pmu_sse_cb_ops);
+		if (sbi_pmu_irq_bit() >= 0)
+			sbi_sse_add_event(SBI_SSE_EVENT_LOCAL_PMU, &pmu_sse_cb_ops);
+	}
 
 	phs = pmu_get_hart_state_ptr(scratch);
 	if (!phs) {

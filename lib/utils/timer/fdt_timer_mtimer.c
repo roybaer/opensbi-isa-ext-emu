@@ -30,7 +30,7 @@ static SBI_LIST_HEAD(mtn_list);
 
 static struct aclint_mtimer_data *mt_reference = NULL;
 
-static int timer_mtimer_cold_init(void *fdt, int nodeoff,
+static int timer_mtimer_cold_init(const void *fdt, int nodeoff,
 				  const struct fdt_match *match)
 {
 	int rc;
@@ -162,9 +162,7 @@ static const struct fdt_match timer_mtimer_match[] = {
 	{ },
 };
 
-struct fdt_timer fdt_timer_mtimer = {
+const struct fdt_driver fdt_timer_mtimer = {
 	.match_table = timer_mtimer_match,
-	.cold_init = timer_mtimer_cold_init,
-	.warm_init = aclint_mtimer_warm_init,
-	.exit = NULL,
+	.init = timer_mtimer_cold_init,
 };

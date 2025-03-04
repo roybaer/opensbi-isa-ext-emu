@@ -11,9 +11,11 @@
 #define __SBI_DOMAIN_H__
 
 #include <sbi/riscv_locks.h>
+#include <sbi/sbi_list.h>
 #include <sbi/sbi_types.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_domain_context.h>
+#include <sbi/sbi_domain_data.h>
 
 struct sbi_scratch;
 
@@ -158,21 +160,15 @@ struct sbi_domain_memregion {
 	unsigned long flags;
 };
 
-/** Maximum number of domains */
-#define SBI_DOMAIN_MAX_INDEX			32
-
 /** Representation of OpenSBI domain */
 struct sbi_domain {
-	/**
-	 * Logical index of this domain
-	 * Note: This set by sbi_domain_finalize() in the coldboot path
-	 */
+	/** Node in linked list of domains */
+	struct sbi_dlist node;
+	/** Internal state of per-domain data */
+	struct sbi_domain_data_priv data_priv;
+	/** Logical index of this domain */
 	u32 index;
-	/**
-	 * HARTs assigned to this domain
-	 * Note: This set by sbi_domain_init() and sbi_domain_finalize()
-	 * in the coldboot path
-	 */
+	/** HARTs assigned to this domain */
 	struct sbi_hartmask assigned_harts;
 	/** Spinlock for accessing assigned_harts */
 	spinlock_t assigned_harts_lock;
@@ -180,8 +176,6 @@ struct sbi_domain {
 	char name[64];
 	/** Possible HARTs in this domain */
 	const struct sbi_hartmask *possible_harts;
-	/** Contexts for possible HARTs indexed by hartindex */
-	struct sbi_context *hartindex_to_context_table[SBI_HARTMASK_MAX_BITS];
 	/** Array of memory regions terminated by a region with order zero */
 	struct sbi_domain_memregion *regions;
 	/** HART id of the HART booting this domain */
@@ -211,18 +205,14 @@ void sbi_update_hartindex_to_domain(u32 hartindex, struct sbi_domain *dom);
 
 /** Get pointer to sbi_domain for current HART */
 #define sbi_domain_thishart_ptr() \
-	sbi_hartindex_to_domain(sbi_hartid_to_hartindex(current_hartid()))
+	sbi_hartindex_to_domain(current_hartindex())
 
-/** Index to domain table */
-extern struct sbi_domain *domidx_to_domain_table[];
-
-/** Get pointer to sbi_domain from index */
-#define sbi_index_to_domain(__index) \
-	domidx_to_domain_table[__index]
+/** Head of linked list of domains */
+extern struct sbi_dlist domain_list;
 
 /** Iterate over each domain */
-#define sbi_domain_for_each(__i, __d) \
-	for ((__i) = 0; ((__d) = sbi_index_to_domain(__i)); (__i)++)
+#define sbi_domain_for_each(__d) \
+	sbi_list_for_each_entry(__d, &domain_list, node)
 
 /** Iterate over each memory region of a domain */
 #define sbi_domain_for_each_memregion(__d, __r) \
@@ -231,20 +221,19 @@ extern struct sbi_domain *domidx_to_domain_table[];
 /**
  * Check whether given HART is assigned to specified domain
  * @param dom pointer to domain
- * @param hartid the HART ID
+ * @param hartindex the HART index
  * @return true if HART is assigned to domain otherwise false
  */
-bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartid);
+bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartindex);
 
 /**
- * Get ulong assigned HART mask for given domain and HART base ID
+ * Get the assigned HART mask for given domain
  * @param dom pointer to domain
- * @param hbase the HART base ID
- * @return ulong possible HART mask
- * Note: the return ulong mask will be set to zero on failure.
+ * @param mask the output hartmask to fill
+ * @return 0 on success and SBI_Exxx (< 0) on failure
  */
-ulong sbi_domain_get_assigned_hartmask(const struct sbi_domain *dom,
-				       ulong hbase);
+int sbi_domain_get_assigned_hartmask(const struct sbi_domain *dom,
+				     struct sbi_hartmask *mask);
 
 /**
  * Initialize a domain memory region based on it's physical
@@ -305,16 +294,6 @@ int sbi_domain_register(struct sbi_domain *dom,
 			const struct sbi_hartmask *assign_mask);
 
 /**
- * Add a memory region to the root domain
- * @param reg pointer to the memory region to be added
- *
- * @return 0 on success
- * @return SBI_EALREADY if memory region conflicts with the existing one
- * @return SBI_EINVAL otherwise
- */
-int sbi_domain_root_add_memregion(const struct sbi_domain_memregion *reg);
-
-/**
  * Add a memory range with its flags to the root domain
  * @param addr start physical address of memory range
  * @param size physical size of memory range
@@ -328,8 +307,11 @@ int sbi_domain_root_add_memregion(const struct sbi_domain_memregion *reg);
 int sbi_domain_root_add_memrange(unsigned long addr, unsigned long size,
 			   unsigned long align, unsigned long region_flags);
 
-/** Finalize domain tables and startup non-root domains */
-int sbi_domain_finalize(struct sbi_scratch *scratch, u32 cold_hartid);
+/** Startup non-root domains */
+int sbi_domain_startup(struct sbi_scratch *scratch, u32 cold_hartid);
+
+/** Finalize domain tables */
+int sbi_domain_finalize(struct sbi_scratch *scratch);
 
 /** Initialize domains */
 int sbi_domain_init(struct sbi_scratch *scratch, u32 cold_hartid);

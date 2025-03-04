@@ -69,9 +69,9 @@ static void starfive_gpio_set(struct gpio_pin *gp, int value)
 	writel(val, (void *)(reg_addr + STARFIVE_GPIO_OUTVAL));
 }
 
-extern struct fdt_gpio fdt_gpio_starfive;
+const struct fdt_gpio fdt_gpio_starfive;
 
-static int starfive_gpio_init(void *fdt, int nodeoff, u32 phandle,
+static int starfive_gpio_init(const void *fdt, int nodeoff,
 			      const struct fdt_match *match)
 {
 	int rc;
@@ -90,7 +90,7 @@ static int starfive_gpio_init(void *fdt, int nodeoff, u32 phandle,
 
 	chip->addr = addr;
 	chip->chip.driver = &fdt_gpio_starfive;
-	chip->chip.id = phandle;
+	chip->chip.id = nodeoff;
 	chip->chip.ngpio = STARFIVE_GPIO_PINS_DEF;
 	chip->chip.direction_output = starfive_gpio_direction_output;
 	chip->chip.set = starfive_gpio_set;
@@ -109,8 +109,10 @@ static const struct fdt_match starfive_gpio_match[] = {
 	{ },
 };
 
-struct fdt_gpio fdt_gpio_starfive = {
-	.match_table = starfive_gpio_match,
+const struct fdt_gpio fdt_gpio_starfive = {
+	.driver = {
+		.match_table = starfive_gpio_match,
+		.init = starfive_gpio_init,
+	},
 	.xlate = fdt_gpio_simple_xlate,
-	.init = starfive_gpio_init,
 };

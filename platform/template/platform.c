@@ -37,6 +37,12 @@ static struct plic_data plic = {
 	.addr = PLATFORM_PLIC_ADDR,
 	.size = PLATFORM_PLIC_SIZE,
 	.num_src = PLATFORM_PLIC_NUM_SOURCES,
+	.context_map = {
+		[0] = { 0, 1 },
+		[1] = { 2, 3 },
+		[2] = { 4, 5 },
+		[3] = { 6, 7 },
+	},
 };
 
 static struct aclint_mswi_data mswi = {
@@ -64,7 +70,12 @@ static struct aclint_mtimer_data mtimer = {
  */
 static int platform_early_init(bool cold_boot)
 {
-	return 0;
+	if (!cold_boot)
+		return 0;
+
+	/* Example if the generic UART8250 driver is used */
+	return uart8250_init(PLATFORM_UART_ADDR, PLATFORM_UART_INPUT_FREQ,
+			     PLATFORM_UART_BAUDRATE, 0, 1, 0);
 }
 
 /*
@@ -76,65 +87,30 @@ static int platform_final_init(bool cold_boot)
 }
 
 /*
- * Initialize the platform console.
+ * Initialize the platform interrupt controller during cold boot.
  */
-static int platform_console_init(void)
+static int platform_irqchip_init(void)
 {
-	/* Example if the generic UART8250 driver is used */
-	return uart8250_init(PLATFORM_UART_ADDR, PLATFORM_UART_INPUT_FREQ,
-			     PLATFORM_UART_BAUDRATE, 0, 1, 0);
-}
-
-/*
- * Initialize the platform interrupt controller for current HART.
- */
-static int platform_irqchip_init(bool cold_boot)
-{
-	u32 hartid = current_hartid();
-	int ret;
-
 	/* Example if the generic PLIC driver is used */
-	if (cold_boot) {
-		ret = plic_cold_irqchip_init(&plic);
-		if (ret)
-			return ret;
-	}
-
-	return plic_warm_irqchip_init(&plic, 2 * hartid, 2 * hartid + 1);
+	return plic_cold_irqchip_init(&plic);
 }
 
 /*
- * Initialize IPI for current HART.
+ * Initialize IPI during cold boot.
  */
-static int platform_ipi_init(bool cold_boot)
+static int platform_ipi_init(void)
 {
-	int ret;
-
 	/* Example if the generic ACLINT driver is used */
-	if (cold_boot) {
-		ret = aclint_mswi_cold_init(&mswi);
-		if (ret)
-			return ret;
-	}
-
-	return aclint_mswi_warm_init();
+	return aclint_mswi_cold_init(&mswi);
 }
 
 /*
- * Initialize platform timer for current HART.
+ * Initialize platform timer during cold boot.
  */
-static int platform_timer_init(bool cold_boot)
+static int platform_timer_init(void)
 {
-	int ret;
-
 	/* Example if the generic ACLINT driver is used */
-	if (cold_boot) {
-		ret = aclint_mtimer_cold_init(&mtimer, NULL);
-		if (ret)
-			return ret;
-	}
-
-	return aclint_mtimer_warm_init();
+	return aclint_mtimer_cold_init(&mtimer, NULL);
 }
 
 /*
@@ -143,7 +119,6 @@ static int platform_timer_init(bool cold_boot)
 const struct sbi_platform_operations platform_ops = {
 	.early_init		= platform_early_init,
 	.final_init		= platform_final_init,
-	.console_init		= platform_console_init,
 	.irqchip_init		= platform_irqchip_init,
 	.ipi_init		= platform_ipi_init,
 	.timer_init		= platform_timer_init

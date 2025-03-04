@@ -17,7 +17,7 @@
 #include <sbi/sbi_scratch.h>
 #include <sbi_utils/fdt/fdt_fixup.h>
 #include <sbi_utils/fdt/fdt_helper.h>
-#include <sbi_utils/irqchip/fdt_irqchip_plic.h>
+#include <sbi_utils/irqchip/plic.h>
 
 #define SUN20I_D1_CCU_BASE		((void *)0x02001000)
 #define SUN20I_D1_RISCV_CFG_BASE	((void *)0x06010000)
@@ -61,31 +61,6 @@ static void sun20i_d1_csr_restore(void)
 }
 
 /*
- * PLIC
- */
-
-#define PLIC_SOURCES			175
-#define PLIC_IE_WORDS			(PLIC_SOURCES / 32 + 1)
-
-static u8 plic_priority[1 + PLIC_SOURCES];
-static u32 plic_sie[PLIC_IE_WORDS];
-static u32 plic_threshold;
-
-static void sun20i_d1_plic_save(void)
-{
-	fdt_plic_context_save(true, plic_sie, &plic_threshold, PLIC_IE_WORDS);
-	fdt_plic_priority_save(plic_priority, PLIC_SOURCES);
-}
-
-static void sun20i_d1_plic_restore(void)
-{
-	thead_plic_restore();
-	fdt_plic_priority_restore(plic_priority, PLIC_SOURCES);
-	fdt_plic_context_restore(true, plic_sie, plic_threshold,
-				 PLIC_IE_WORDS);
-}
-
-/*
  * PPU
  */
 
@@ -117,6 +92,9 @@ static void sun20i_d1_ppu_restore(void)
 
 static void sun20i_d1_riscv_cfg_save(void)
 {
+	struct plic_data *plic = plic_get();
+	u32 *plic_sie = plic->pm_data;
+
 	/* Enable MMIO access. Do not assume S-mode leaves the clock enabled. */
 	writel_relaxed(CCU_BGR_ENABLE, SUN20I_D1_CCU_BASE + RISCV_CFG_BGR_REG);
 
@@ -126,7 +104,7 @@ static void sun20i_d1_riscv_cfg_save(void)
 	 * the wakeup mask registers (the offset is for GIC compatibility). So
 	 * copying SIE to the wakeup mask needs some bit manipulation.
 	 */
-	for (int i = 0; i < PLIC_IE_WORDS - 1; i++)
+	for (int i = 0; i < PLIC_IE_WORDS(plic) - 1; i++)
 		writel_relaxed(plic_sie[i] >> 16 | plic_sie[i + 1] << 16,
 			       SUN20I_D1_RISCV_CFG_BASE + WAKEUP_MASK_REG(i));
 
@@ -152,13 +130,13 @@ static void sun20i_d1_riscv_cfg_init(void)
 	writel_relaxed(entry >> 32, SUN20I_D1_RISCV_CFG_BASE + RESET_ENTRY_HI_REG);
 }
 
-static int sun20i_d1_hart_suspend(u32 suspend_type)
+static int sun20i_d1_hart_suspend(u32 suspend_type, ulong mmode_resume_addr)
 {
 	/* Use the generic code for retentive suspend. */
 	if (!(suspend_type & SBI_HSM_SUSP_NON_RET_BIT))
 		return SBI_ENOTSUPP;
 
-	sun20i_d1_plic_save();
+	plic_suspend();
 	sun20i_d1_ppu_save();
 	sun20i_d1_riscv_cfg_save();
 	sun20i_d1_csr_save();
@@ -178,7 +156,7 @@ static void sun20i_d1_hart_resume(void)
 	sun20i_d1_csr_restore();
 	sun20i_d1_riscv_cfg_restore();
 	sun20i_d1_ppu_restore();
-	sun20i_d1_plic_restore();
+	plic_resume();
 }
 
 static const struct sbi_hsm_device sun20i_d1_ppu = {
@@ -187,7 +165,8 @@ static const struct sbi_hsm_device sun20i_d1_ppu = {
 	.hart_resume	= sun20i_d1_hart_resume,
 };
 
-static int sun20i_d1_final_init(bool cold_boot, const struct fdt_match *match)
+static int sun20i_d1_final_init(bool cold_boot, void *fdt,
+				const struct fdt_match *match)
 {
 	if (cold_boot) {
 		sun20i_d1_riscv_cfg_init();

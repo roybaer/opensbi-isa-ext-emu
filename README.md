@@ -99,7 +99,7 @@ capable enough to bring up all other non-booting harts using HSM extension.
 Required Toolchain and Packages
 -------------------------------
 
-OpenSBI can be compiled natively or cross-compiled on a x86 host. For
+OpenSBI can be compiled natively or cross-compiled on a host machine. For
 cross-compilation, you can build your own toolchain, download a prebuilt one
 from the [Bootlin toolchain repository] or install a distribution-provided
 toolchain; if you opt to use LLVM/Clang, most distribution toolchains will
@@ -108,16 +108,12 @@ LLVM/Clang toolchain due to LLVM's ability to support multiple backends in the
 same binary, so is often an easy way to obtain a working cross-compilation
 toolchain.
 
-Basically, we prefer toolchains with Position Independent Executable (PIE)
-support like *riscv64-linux-gnu-gcc*, *riscv64-unknown-freebsd-gcc*, or
-*Clang/LLVM* as they generate PIE firmware images that can run at arbitrary
-address with appropriate alignment. If a bare-metal GNU toolchain (e.g.
-*riscv64-unknown-elf-gcc*) is used, static linked firmware images are
-generated instead. *Clang/LLVM* can still generate PIE images if a bare-metal
-triple is used (e.g. *-target riscv64-unknown-elf*).
-
-Please note that only a 64-bit version of the toolchain is available in
-the Bootlin toolchain repository for now.
+Toolchains with Position Independent Executable (PIE) support like
+*riscv64-linux-gnu-gcc*, *riscv64-unknown-freebsd-gcc*, or *Clang/LLVM* are
+required in order to generate PIE firmware images that can run at arbitrary
+address with appropriate alignment. Bare-metal GNU toolchains (e.g.
+*riscv64-unknown-elf-gcc*) cannot be used. *Clang/LLVM* can still generate PIE
+images if a bare-metal triple is used (e.g. *-target riscv64-unknown-elf*).
 
 In addition to a toolchain, OpenSBI also requires the following packages on
 the host:

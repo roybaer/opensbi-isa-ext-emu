@@ -65,20 +65,11 @@ bool sbi_system_reset_supported(u32 reset_type, u32 reset_reason)
 
 void __noreturn sbi_system_reset(u32 reset_type, u32 reset_reason)
 {
-	ulong hbase = 0, hmask;
-	u32 cur_hartid = current_hartid();
 	struct sbi_domain *dom = sbi_domain_thishart_ptr();
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 
 	/* Send HALT IPI to every hart other than the current hart */
-	while (!sbi_hsm_hart_interruptible_mask(dom, hbase, &hmask)) {
-		if ((hbase <= cur_hartid)
-			  && (cur_hartid < hbase + BITS_PER_LONG))
-			hmask &= ~(1UL << (cur_hartid - hbase));
-		if (hmask)
-			sbi_ipi_send_halt(hmask, hbase);
-		hbase += BITS_PER_LONG;
-	}
+	sbi_ipi_send_halt(0, -1UL);
 
 	/* Stop current HART */
 	sbi_hsm_hart_stop(scratch, false);
@@ -151,9 +142,9 @@ int sbi_system_suspend(u32 sleep_type, ulong resume_addr, ulong opaque)
 	struct sbi_domain *dom = sbi_domain_thishart_ptr();
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	void (*jump_warmboot)(void) = (void (*)(void))scratch->warmboot_addr;
-	unsigned int hartid = current_hartid();
+	unsigned int hartindex = current_hartindex();
 	unsigned long prev_mode;
-	unsigned long i, j;
+	unsigned long i;
 	int ret;
 
 	if (!dom || !dom->system_suspend_allowed)
@@ -167,14 +158,13 @@ int sbi_system_suspend(u32 sleep_type, ulong resume_addr, ulong opaque)
 	if (ret != SBI_OK)
 		return ret;
 
-	prev_mode = (csr_read(CSR_MSTATUS) & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT;
+	prev_mode = sbi_mstatus_prev_mode(csr_read(CSR_MSTATUS));
 	if (prev_mode != PRV_S && prev_mode != PRV_U)
 		return SBI_EFAIL;
 
 	spin_lock(&dom->assigned_harts_lock);
-	sbi_hartmask_for_each_hartindex(j, &dom->assigned_harts) {
-		i = sbi_hartindex_to_hartid(j);
-		if (i == hartid)
+	sbi_hartmask_for_each_hartindex(i, &dom->assigned_harts) {
+		if (i == hartindex)
 			continue;
 		if (__sbi_hsm_hart_get_state(i) != SBI_HSM_STATE_STOPPED) {
 			spin_unlock(&dom->assigned_harts_lock);

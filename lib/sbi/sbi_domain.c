@@ -13,20 +13,18 @@
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_hsm.h>
+#include <sbi/sbi_list.h>
 #include <sbi/sbi_math.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
 
-/*
- * We allocate an extra element because sbi_domain_for_each() expects
- * the array to be null-terminated.
- */
-struct sbi_domain *domidx_to_domain_table[SBI_DOMAIN_MAX_INDEX + 1] = { 0 };
+SBI_LIST_HEAD(domain_list);
+
 static u32 domain_count = 0;
 static bool domain_finalized = false;
 
-#define ROOT_REGION_MAX	16
+#define ROOT_REGION_MAX	32
 static u32 root_memregs_count = 0;
 
 struct sbi_domain root = {
@@ -62,7 +60,7 @@ void sbi_update_hartindex_to_domain(u32 hartindex, struct sbi_domain *dom)
 	sbi_scratch_write_type(scratch, void *, domain_hart_ptr_offset, dom);
 }
 
-bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartid)
+bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartindex)
 {
 	bool ret;
 	struct sbi_domain *tdom = (struct sbi_domain *)dom;
@@ -71,26 +69,25 @@ bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartid)
 		return false;
 
 	spin_lock(&tdom->assigned_harts_lock);
-	ret = sbi_hartmask_test_hartid(hartid, &tdom->assigned_harts);
+	ret = sbi_hartmask_test_hartindex(hartindex, &tdom->assigned_harts);
 	spin_unlock(&tdom->assigned_harts_lock);
 
 	return ret;
 }
 
-ulong sbi_domain_get_assigned_hartmask(const struct sbi_domain *dom,
-				       ulong hbase)
+int sbi_domain_get_assigned_hartmask(const struct sbi_domain *dom,
+				     struct sbi_hartmask *mask)
 {
 	ulong ret = 0;
 	struct sbi_domain *tdom = (struct sbi_domain *)dom;
 
-	if (!dom)
+	if (!dom) {
+		sbi_hartmask_clear_all(mask);
 		return 0;
+	}
 
 	spin_lock(&tdom->assigned_harts_lock);
-	for (int i = 0; i < 8 * sizeof(ret); i++) {
-		if (sbi_hartmask_test_hartid(hbase + i, &tdom->assigned_harts))
-			ret |= 1UL << i;
-	}
+	sbi_hartmask_copy(mask, &tdom->assigned_harts);
 	spin_unlock(&tdom->assigned_harts_lock);
 
 	return ret;
@@ -449,7 +446,7 @@ void sbi_domain_dump(const struct sbi_domain *dom, const char *suffix)
 	sbi_hartmask_for_each_hartindex(i, dom->possible_harts) {
 		j = sbi_hartindex_to_hartid(i);
 		sbi_printf("%s%d%s", (k++) ? "," : "",
-			   j, sbi_domain_is_assigned_hart(dom, j) ? "*" : "");
+			   j, sbi_domain_is_assigned_hart(dom, i) ? "*" : "");
 	}
 	sbi_printf("\n");
 
@@ -519,10 +516,9 @@ void sbi_domain_dump(const struct sbi_domain *dom, const char *suffix)
 
 void sbi_domain_dump_all(const char *suffix)
 {
-	u32 i;
 	const struct sbi_domain *dom;
 
-	sbi_domain_for_each(i, dom) {
+	sbi_domain_for_each(dom) {
 		sbi_domain_dump(dom, suffix);
 		sbi_printf("\n");
 	}
@@ -541,19 +537,9 @@ int sbi_domain_register(struct sbi_domain *dom,
 		return SBI_EINVAL;
 
 	/* Check if domain already discovered */
-	sbi_domain_for_each(i, tdom) {
+	sbi_domain_for_each(tdom) {
 		if (tdom == dom)
 			return SBI_EALREADY;
-	}
-
-	/*
-	 * Ensure that we have room for Domain Index to
-	 * HART ID mapping
-	 */
-	if (SBI_DOMAIN_MAX_INDEX <= domain_count) {
-		sbi_printf("%s: No room for %s\n",
-			   __func__, dom->name);
-		return SBI_ENOSPC;
 	}
 
 	/* Sanitize discovered domain */
@@ -565,9 +551,10 @@ int sbi_domain_register(struct sbi_domain *dom,
 		return rc;
 	}
 
+	sbi_list_add_tail(&dom->node, &domain_list);
+
 	/* Assign index to domain */
 	dom->index = domain_count++;
-	domidx_to_domain_table[dom->index] = dom;
 
 	/* Initialize spinlock for dom->assigned_harts */
 	SPIN_LOCK_INIT(dom->assigned_harts_lock);
@@ -599,10 +586,19 @@ int sbi_domain_register(struct sbi_domain *dom,
 		}
 	}
 
+	/* Setup data for the discovered domain */
+	rc = sbi_domain_setup_data(dom);
+	if (rc) {
+		sbi_printf("%s: domain data setup failed for %s (error %d)\n",
+			   __func__, dom->name, rc);
+		sbi_list_del(&dom->node);
+		return rc;
+	}
+
 	return 0;
 }
 
-int sbi_domain_root_add_memregion(const struct sbi_domain_memregion *reg)
+static int root_add_memregion(const struct sbi_domain_memregion *reg)
 {
 	int rc;
 	bool reg_merged;
@@ -680,7 +676,7 @@ int sbi_domain_root_add_memrange(unsigned long addr, unsigned long size,
 				(end - pos) : align;
 
 		sbi_domain_memregion_init(pos, rsize, region_flags, &reg);
-		rc = sbi_domain_root_add_memregion(&reg);
+		rc = root_add_memregion(&reg);
 		if (rc)
 			return rc;
 		pos += rsize;
@@ -689,23 +685,18 @@ int sbi_domain_root_add_memrange(unsigned long addr, unsigned long size,
 	return 0;
 }
 
-int sbi_domain_finalize(struct sbi_scratch *scratch, u32 cold_hartid)
+int sbi_domain_startup(struct sbi_scratch *scratch, u32 cold_hartid)
 {
 	int rc;
-	u32 i, dhart;
+	u32 dhart;
 	struct sbi_domain *dom;
-	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
 
-	/* Initialize and populate domains for the platform */
-	rc = sbi_platform_domains_init(plat);
-	if (rc) {
-		sbi_printf("%s: platform domains_init() failed (error %d)\n",
-			   __func__, rc);
-		return rc;
-	}
+	/* Sanity checks */
+	if (!domain_finalized)
+		return SBI_EINVAL;
 
 	/* Startup boot HART of domains */
-	sbi_domain_for_each(i, dom) {
+	sbi_domain_for_each(dom) {
 		/* Domain boot HART index */
 		dhart = sbi_hartid_to_hartindex(dom->boot_hartid);
 
@@ -748,6 +739,26 @@ int sbi_domain_finalize(struct sbi_scratch *scratch, u32 cold_hartid)
 		}
 	}
 
+	return 0;
+}
+
+int sbi_domain_finalize(struct sbi_scratch *scratch)
+{
+	int rc;
+	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
+
+	/* Sanity checks */
+	if (domain_finalized)
+		return SBI_EINVAL;
+
+	/* Initialize and populate domains for the platform */
+	rc = sbi_platform_domains_init(plat);
+	if (rc) {
+		sbi_printf("%s: platform domains_init() failed (error %d)\n",
+			   __func__, rc);
+		return rc;
+	}
+
 	/*
 	 * Set the finalized flag so that the root domain
 	 * regions can't be changed.
@@ -764,6 +775,8 @@ int sbi_domain_init(struct sbi_scratch *scratch, u32 cold_hartid)
 	struct sbi_hartmask *root_hmask;
 	struct sbi_domain_memregion *root_memregs;
 	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
+
+	SBI_INIT_LIST_HEAD(&domain_list);
 
 	if (scratch->fw_rw_offset == 0 ||
 	    (scratch->fw_rw_offset & (scratch->fw_rw_offset - 1)) != 0) {
@@ -782,11 +795,16 @@ int sbi_domain_init(struct sbi_scratch *scratch, u32 cold_hartid)
 	if (!domain_hart_ptr_offset)
 		return SBI_ENOMEM;
 
+	/* Initialize domain context support */
+	rc = sbi_domain_context_init();
+	if (rc)
+		goto fail_free_domain_hart_ptr_offset;
+
 	root_memregs = sbi_calloc(sizeof(*root_memregs), ROOT_REGION_MAX + 1);
 	if (!root_memregs) {
 		sbi_printf("%s: no memory for root regions\n", __func__);
 		rc = SBI_ENOMEM;
-		goto fail_free_domain_hart_ptr_offset;
+		goto fail_deinit_context;
 	}
 	root.regions = root_memregs;
 
@@ -851,6 +869,8 @@ fail_free_root_hmask:
 	sbi_free(root_hmask);
 fail_free_root_memregs:
 	sbi_free(root_memregs);
+fail_deinit_context:
+	sbi_domain_context_deinit();
 fail_free_domain_hart_ptr_offset:
 	sbi_scratch_free_offset(domain_hart_ptr_offset);
 	return rc;

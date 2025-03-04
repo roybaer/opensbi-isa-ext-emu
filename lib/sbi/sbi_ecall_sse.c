@@ -36,6 +36,12 @@ static int sbi_ecall_sse_handler(unsigned long extid, unsigned long funcid,
 	case SBI_EXT_SSE_INJECT:
 		ret = sbi_sse_inject_from_ecall(regs->a0, regs->a1, out);
 		break;
+	case SBI_EXT_SSE_HART_MASK:
+		ret = sbi_sse_hart_mask();
+		break;
+	case SBI_EXT_SSE_HART_UNMASK:
+		ret = sbi_sse_hart_unmask();
+		break;
 	default:
 		ret = SBI_ENOTSUPP;
 	}
@@ -50,8 +56,10 @@ static int sbi_ecall_sse_register_extensions(void)
 }
 
 struct sbi_ecall_extension ecall_sse = {
+	.name			= "sse",
 	.extid_start		= SBI_EXT_SSE,
 	.extid_end		= SBI_EXT_SSE,
+	.experimental		= true,
 	.register_extensions	= sbi_ecall_sse_register_extensions,
 	.handle			= sbi_ecall_sse_handler,
 };

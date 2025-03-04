@@ -12,6 +12,8 @@
 
 /* clang-format off */
 
+#include <sbi/sbi_types.h>
+
 /* SBI Extension IDs */
 #define SBI_EXT_0_1_SET_TIMER			0x0
 #define SBI_EXT_0_1_CONSOLE_PUTCHAR		0x1
@@ -34,6 +36,8 @@
 #define SBI_EXT_CPPC				0x43505043
 #define SBI_EXT_DBTR				0x44425452
 #define SBI_EXT_SSE				0x535345
+#define SBI_EXT_FWFT				0x46574654
+#define SBI_EXT_MPXY				0x4D505859
 
 /* SBI function IDs for BASE extension*/
 #define SBI_EXT_BASE_GET_SPEC_VERSION		0x0
@@ -110,6 +114,7 @@
 #define SBI_EXT_PMU_COUNTER_FW_READ	0x5
 #define SBI_EXT_PMU_COUNTER_FW_READ_HI	0x6
 #define SBI_EXT_PMU_SNAPSHOT_SET_SHMEM	0x7
+#define SBI_EXT_PMU_EVENT_GET_INFO		0x8
 
 /* SBI function IDs for DBTR extension */
 #define SBI_EXT_DBTR_NUM_TRIGGERS	0x0
@@ -120,6 +125,33 @@
 #define SBI_EXT_DBTR_TRIGGER_UNINSTALL	0x5
 #define SBI_EXT_DBTR_TRIGGER_ENABLE	0x6
 #define SBI_EXT_DBTR_TRIGGER_DISABLE	0x7
+
+/* SBI function IDs for FW feature extension */
+#define SBI_EXT_FWFT_SET		0x0
+#define SBI_EXT_FWFT_GET		0x1
+
+enum sbi_fwft_feature_t {
+	SBI_FWFT_MISALIGNED_EXC_DELEG		= 0x0,
+	SBI_FWFT_LANDING_PAD			= 0x1,
+	SBI_FWFT_SHADOW_STACK			= 0x2,
+	SBI_FWFT_DOUBLE_TRAP			= 0x3,
+	SBI_FWFT_PTE_AD_HW_UPDATING		= 0x4,
+	SBI_FWFT_POINTER_MASKING_PMLEN		= 0x5,
+	SBI_FWFT_LOCAL_RESERVED_START		= 0x6,
+	SBI_FWFT_LOCAL_RESERVED_END		= 0x3fffffff,
+	SBI_FWFT_LOCAL_PLATFORM_START		= 0x40000000,
+	SBI_FWFT_LOCAL_PLATFORM_END		= 0x7fffffff,
+
+	SBI_FWFT_GLOBAL_RESERVED_START		= 0x80000000,
+	SBI_FWFT_GLOBAL_RESERVED_END		= 0xbfffffff,
+	SBI_FWFT_GLOBAL_PLATFORM_START		= 0xc0000000,
+	SBI_FWFT_GLOBAL_PLATFORM_END		= 0xffffffff,
+};
+
+#define SBI_FWFT_GLOBAL_FEATURE_BIT		(1 << 31)
+#define SBI_FWFT_PLATFORM_FEATURE_BIT		(1 << 30)
+
+#define SBI_FWFT_SET_FLAG_LOCK			(1 << 0)
 
 /** General pmu event codes specified in SBI PMU extension */
 enum sbi_pmu_hw_generic_events_t {
@@ -221,6 +253,7 @@ enum sbi_pmu_event_type_id {
 	SBI_PMU_EVENT_TYPE_HW				= 0x0,
 	SBI_PMU_EVENT_TYPE_HW_CACHE			= 0x1,
 	SBI_PMU_EVENT_TYPE_HW_RAW			= 0x2,
+	SBI_PMU_EVENT_TYPE_HW_RAW_V2			= 0x3,
 	SBI_PMU_EVENT_TYPE_FW				= 0xf,
 	SBI_PMU_EVENT_TYPE_MAX,
 };
@@ -231,12 +264,19 @@ enum sbi_pmu_ctr_type {
 	SBI_PMU_CTR_TYPE_FW,
 };
 
+struct sbi_pmu_event_info {
+	uint32_t event_idx;
+	uint32_t output;
+	uint64_t event_data;
+};
+
 /* Helper macros to decode event idx */
 #define SBI_PMU_EVENT_IDX_MASK 0xFFFFF
 #define SBI_PMU_EVENT_IDX_TYPE_OFFSET 16
 #define SBI_PMU_EVENT_IDX_TYPE_MASK (0xF << SBI_PMU_EVENT_IDX_TYPE_OFFSET)
 #define SBI_PMU_EVENT_IDX_CODE_MASK 0xFFFF
 #define SBI_PMU_EVENT_RAW_IDX 0x20000
+#define SBI_PMU_EVENT_RAW_V2_IDX 0x30000
 
 #define SBI_PMU_EVENT_IDX_INVALID 0xFFFFFFFF
 
@@ -318,6 +358,8 @@ enum sbi_cppc_reg_id {
 #define SBI_EXT_SSE_DISABLE		0x00000005
 #define SBI_EXT_SSE_COMPLETE		0x00000006
 #define SBI_EXT_SSE_INJECT		0x00000007
+#define SBI_EXT_SSE_HART_UNMASK		0x00000008
+#define SBI_EXT_SSE_HART_MASK		0x00000009
 
 /* SBI SSE Event Attributes. */
 enum sbi_sse_attr_id {
@@ -356,11 +398,12 @@ enum sbi_sse_state {
 
 /* SBI SSE Event IDs. */
 #define SBI_SSE_EVENT_LOCAL_RAS			0x00000000
+#define SBI_SSE_EVENT_LOCAL_DOUBLE_TRAP		0x00000001
 #define SBI_SSE_EVENT_LOCAL_PLAT_0_START	0x00004000
 #define SBI_SSE_EVENT_LOCAL_PLAT_0_END		0x00007fff
 #define SBI_SSE_EVENT_GLOBAL_RAS		0x00008000
-#define SBI_SSE_EVENT_GLOBAL_PLAT_0_START	0x00004000
-#define SBI_SSE_EVENT_GLOBAL_PLAT_0_END		0x00007fff
+#define SBI_SSE_EVENT_GLOBAL_PLAT_0_START	0x0000c000
+#define SBI_SSE_EVENT_GLOBAL_PLAT_0_END		0x0000ffff
 
 #define SBI_SSE_EVENT_LOCAL_PMU			0x00010000
 #define SBI_SSE_EVENT_LOCAL_PLAT_1_START	0x00014000
@@ -382,6 +425,16 @@ enum sbi_sse_state {
 
 #define SBI_SSE_EVENT_GLOBAL_BIT		(1 << 15)
 #define SBI_SSE_EVENT_PLATFORM_BIT		(1 << 14)
+
+/* SBI function IDs for MPXY extension */
+#define SBI_EXT_MPXY_GET_SHMEM_SIZE		0x0
+#define SBI_EXT_MPXY_SET_SHMEM			0x1
+#define SBI_EXT_MPXY_GET_CHANNEL_IDS		0x2
+#define SBI_EXT_MPXY_READ_ATTRS			0x3
+#define SBI_EXT_MPXY_WRITE_ATTRS		0x4
+#define SBI_EXT_MPXY_SEND_MSG_WITH_RESP		0x5
+#define SBI_EXT_MPXY_SEND_MSG_WITHOUT_RESP	0x6
+#define SBI_EXT_MPXY_GET_NOTIFICATION_EVENTS	0x7
 
 /* SBI base specification related macros */
 #define SBI_SPEC_VERSION_MAJOR_OFFSET		24
@@ -405,8 +458,11 @@ enum sbi_sse_state {
 #define SBI_ERR_NO_SHMEM			-9
 #define SBI_ERR_INVALID_STATE			-10
 #define SBI_ERR_BAD_RANGE			-11
+#define SBI_ERR_TIMEOUT				-12
+#define SBI_ERR_IO				-13
+#define SBI_ERR_DENIED_LOCKED			-14
 
-#define SBI_LAST_ERR				SBI_ERR_BAD_RANGE
+#define SBI_LAST_ERR				SBI_ERR_DENIED_LOCKED
 
 /* clang-format on */
 

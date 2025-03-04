@@ -12,9 +12,9 @@
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_system.h>
+#include <sbi_utils/fdt/fdt_driver.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/regmap/fdt_regmap.h>
-#include <sbi_utils/reset/fdt_reset.h>
 
 struct syscon_reset {
 	struct regmap *rmap;
@@ -96,8 +96,8 @@ static struct sbi_system_reset_device syscon_reboot = {
 	.system_reset = syscon_do_reboot
 };
 
-static int syscon_reset_init(void *fdt, int nodeoff,
-			   const struct fdt_match *match)
+static int syscon_reset_init(const void *fdt, int nodeoff,
+			     const struct fdt_match *match)
 {
 	int rc, len;
 	const fdt32_t *val, *mask;
@@ -151,7 +151,7 @@ static const struct fdt_match syscon_poweroff_match[] = {
 	{ },
 };
 
-struct fdt_reset fdt_syscon_poweroff = {
+const struct fdt_driver fdt_syscon_poweroff = {
 	.match_table = syscon_poweroff_match,
 	.init = syscon_reset_init,
 };
@@ -161,7 +161,7 @@ static const struct fdt_match syscon_reboot_match[] = {
 	{ },
 };
 
-struct fdt_reset fdt_syscon_reboot = {
+const struct fdt_driver fdt_syscon_reboot = {
 	.match_table = syscon_reboot_match,
 	.init = syscon_reset_init,
 };

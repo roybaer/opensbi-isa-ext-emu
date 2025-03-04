@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2023 Renesas Electronics Corp.
- *
- * Copyright (c) 2020 Andes Technology Corporation
+ * Copyright (c) 2024 Andes Technology Corporation
  *
  * Authors:
- *      Nick Hu <nickhu@andestech.com>
- *      Nylon Chen <nylon7@andestech.com>
+ *      Ben Zong-You Xie <ben717@andestech.com>
  *      Lad Prabhakar <prabhakar.mahadev-lad.rj@bp.renesas.com>
  */
 
@@ -19,124 +17,170 @@
 #include <sbi/sbi_error.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
-static inline unsigned long andes_pma_read_cfg(unsigned int pma_cfg_off)
+static unsigned long andes_pma_read_num(unsigned int csr_num)
 {
-#define switchcase_pma_cfg_read(__pma_cfg_off, __val)		\
-	case __pma_cfg_off:					\
-		__val = csr_read(__pma_cfg_off);		\
+#define switchcase_csr_read(__csr_num, __val)		\
+	case __csr_num:					\
+		__val = csr_read(__csr_num);		\
 		break;
-#define switchcase_pma_cfg_read_2(__pma_cfg_off, __val)		\
-	switchcase_pma_cfg_read(__pma_cfg_off + 0, __val)	\
-	switchcase_pma_cfg_read(__pma_cfg_off + 2, __val)
+#define switchcase_csr_read_2(__csr_num, __val)		\
+	switchcase_csr_read(__csr_num + 0, __val)	\
+	switchcase_csr_read(__csr_num + 1, __val)
+#define switchcase_csr_read_4(__csr_num, __val)		\
+	switchcase_csr_read_2(__csr_num + 0, __val)	\
+	switchcase_csr_read_2(__csr_num + 2, __val)
+#define switchcase_csr_read_8(__csr_num, __val)		\
+	switchcase_csr_read_4(__csr_num + 0, __val)	\
+	switchcase_csr_read_4(__csr_num + 4, __val)
+#define switchcase_csr_read_16(__csr_num, __val)	\
+	switchcase_csr_read_8(__csr_num + 0, __val)	\
+	switchcase_csr_read_8(__csr_num + 8, __val)
 
 	unsigned long ret = 0;
 
-	switch (pma_cfg_off) {
-	switchcase_pma_cfg_read_2(CSR_PMACFG0, ret)
-
+	switch (csr_num) {
+	switchcase_csr_read_4(CSR_PMACFG0, ret)
+	switchcase_csr_read_16(CSR_PMAADDR0, ret)
 	default:
-		sbi_panic("%s: Unknown PMA CFG offset %#x", __func__, pma_cfg_off);
+		sbi_panic("%s: Unknown Andes PMA CSR %#x", __func__, csr_num);
 		break;
 	}
 
 	return ret;
 
-#undef switchcase_pma_cfg_read_2
-#undef switchcase_pma_cfg_read
+#undef switchcase_csr_read_16
+#undef switchcase_csr_read_8
+#undef switchcase_csr_read_4
+#undef switchcase_csr_read_2
+#undef switchcase_csr_read
 }
 
-static inline void andes_pma_write_cfg(unsigned int pma_cfg_off, unsigned long val)
+static void andes_pma_write_num(unsigned int csr_num, unsigned long val)
 {
-#define switchcase_pma_cfg_write(__pma_cfg_off, __val)		\
-	case __pma_cfg_off:					\
-		csr_write(__pma_cfg_off, __val);		\
+#define switchcase_csr_write(__csr_num, __val)		\
+	case __csr_num:					\
+		csr_write(__csr_num, __val);		\
 		break;
-#define switchcase_pma_cfg_write_2(__pma_cfg_off, __val)	\
-	switchcase_pma_cfg_write(__pma_cfg_off + 0, __val)	\
-	switchcase_pma_cfg_write(__pma_cfg_off + 2, __val)
+#define switchcase_csr_write_2(__csr_num, __val)	\
+	switchcase_csr_write(__csr_num + 0, __val)	\
+	switchcase_csr_write(__csr_num + 1, __val)
+#define switchcase_csr_write_4(__csr_num, __val)	\
+	switchcase_csr_write_2(__csr_num + 0, __val)	\
+	switchcase_csr_write_2(__csr_num + 2, __val)
+#define switchcase_csr_write_8(__csr_num, __val)	\
+	switchcase_csr_write_4(__csr_num + 0, __val)	\
+	switchcase_csr_write_4(__csr_num + 4, __val)
+#define switchcase_csr_write_16(__csr_num, __val)	\
+	switchcase_csr_write_8(__csr_num + 0, __val)	\
+	switchcase_csr_write_8(__csr_num + 8, __val)
 
-	switch (pma_cfg_off) {
-	switchcase_pma_cfg_write_2(CSR_PMACFG0, val)
-
+	switch (csr_num) {
+	switchcase_csr_write_4(CSR_PMACFG0, val)
+	switchcase_csr_write_16(CSR_PMAADDR0, val)
 	default:
-		sbi_panic("%s: Unknown PMA CFG offset %#x", __func__, pma_cfg_off);
+		sbi_panic("%s: Unknown Andes PMA CSR %#x", __func__, csr_num);
 		break;
 	}
 
-#undef switchcase_pma_cfg_write_2
-#undef switchcase_pma_cfg_write
+#undef switchcase_csr_write_16
+#undef switchcase_csr_write_8
+#undef switchcase_csr_write_4
+#undef switchcase_csr_write_2
+#undef switchcase_csr_write
 }
 
-static inline void andes_pma_write_addr(unsigned int pma_addr_off, unsigned long val)
+static inline bool not_napot(unsigned long addr, unsigned long size)
 {
-#define switchcase_pma_write(__pma_addr_off, __val)		\
-	case __pma_addr_off:					\
-		csr_write(__pma_addr_off, __val);		\
-		break;
-#define switchcase_pma_write_2(__pma_addr_off, __val)		\
-	switchcase_pma_write(__pma_addr_off + 0, __val)		\
-	switchcase_pma_write(__pma_addr_off + 1, __val)
-#define switchcase_pma_write_4(__pma_addr_off, __val)		\
-	switchcase_pma_write_2(__pma_addr_off + 0, __val)	\
-	switchcase_pma_write_2(__pma_addr_off + 2, __val)
-#define switchcase_pma_write_8(__pma_addr_off, __val)		\
-	switchcase_pma_write_4(__pma_addr_off + 0, __val)	\
-	switchcase_pma_write_4(__pma_addr_off + 4, __val)
-#define switchcase_pma_write_16(__pma_addr_off, __val)		\
-	switchcase_pma_write_8(__pma_addr_off + 0, __val)	\
-	switchcase_pma_write_8(__pma_addr_off + 8, __val)
-
-	switch (pma_addr_off) {
-	switchcase_pma_write_16(CSR_PMAADDR0, val)
-
-	default:
-		sbi_panic("%s: Unknown PMA ADDR offset %#x", __func__, pma_addr_off);
-		break;
-	}
-
-#undef switchcase_pma_write_16
-#undef switchcase_pma_write_8
-#undef switchcase_pma_write_4
-#undef switchcase_pma_write_2
-#undef switchcase_pma_write
+	return ((size & (size - 1)) || (addr & (size - 1)));
 }
 
-static inline unsigned long andes_pma_read_addr(unsigned int pma_addr_off)
+static inline bool is_pma_entry_disable(char pmaxcfg)
 {
-#define switchcase_pma_read(__pma_addr_off, __val)		\
-	case __pma_addr_off:					\
-		__val = csr_read(__pma_addr_off);		\
-		break;
-#define switchcase_pma_read_2(__pma_addr_off, __val)		\
-	switchcase_pma_read(__pma_addr_off + 0, __val)		\
-	switchcase_pma_read(__pma_addr_off + 1, __val)
-#define switchcase_pma_read_4(__pma_addr_off, __val)		\
-	switchcase_pma_read_2(__pma_addr_off + 0, __val)	\
-	switchcase_pma_read_2(__pma_addr_off + 2, __val)
-#define switchcase_pma_read_8(__pma_addr_off, __val)		\
-	switchcase_pma_read_4(__pma_addr_off + 0, __val)	\
-	switchcase_pma_read_4(__pma_addr_off + 4, __val)
-#define switchcase_pma_read_16(__pma_addr_off, __val)		\
-	switchcase_pma_read_8(__pma_addr_off + 0, __val)	\
-	switchcase_pma_read_8(__pma_addr_off + 8, __val)
+	return (pmaxcfg & ANDES_PMACFG_ETYP_MASK) == ANDES_PMACFG_ETYP_OFF ?
+	       true : false;
+}
 
-	unsigned long ret = 0;
+static char get_pmaxcfg(int entry_id)
+{
+	unsigned int pmacfg_addr;
+	unsigned long pmacfg_val;
+	char *pmaxcfg;
 
-	switch (pma_addr_off) {
-	switchcase_pma_read_16(CSR_PMAADDR0, ret)
+#if __riscv_xlen == 64
+	pmacfg_addr = CSR_PMACFG0 + ((entry_id / 8) ? 2 : 0);
+	pmacfg_val = andes_pma_read_num(pmacfg_addr);
+	pmaxcfg = (char *)&pmacfg_val + (entry_id % 8);
+#elif __riscv_xlen == 32
+	pmacfg_addr = CSR_PMACFG0 + (entry_id / 4);
+	pmacfg_val = andes_pma_read_num(pmacfg_addr);
+	pmaxcfg = (char *)&pmacfg_val + (entry_id % 4);
+#else
+#error "Unexpected __riscv_xlen"
+#endif
+	return *pmaxcfg;
+}
 
-	default:
-		sbi_panic("%s: Unknown PMA ADDR offset %#x", __func__, pma_addr_off);
-		break;
+static void set_pmaxcfg(int entry_id, char flags)
+{
+	unsigned int pmacfg_addr;
+	unsigned long pmacfg_val;
+	char *pmaxcfg;
+
+#if __riscv_xlen == 64
+	pmacfg_addr = CSR_PMACFG0 + ((entry_id / 8) ? 2 : 0);
+	pmacfg_val = andes_pma_read_num(pmacfg_addr);
+	pmaxcfg = (char *)&pmacfg_val + (entry_id % 8);
+#elif __riscv_xlen == 32
+	pmacfg_addr = CSR_PMACFG0 + (entry_id / 4);
+	pmacfg_val = andes_pma_read_num(pmacfg_addr);
+	pmaxcfg = (char *)&pmacfg_val + (entry_id % 4);
+#else
+#error "Unexpected __riscv_xlen"
+#endif
+	*pmaxcfg = flags;
+	andes_pma_write_num(pmacfg_addr, pmacfg_val);
+}
+
+static void decode_pmaaddrx(int entry_id, unsigned long *start,
+			    unsigned long *size)
+{
+	unsigned long pmaaddr;
+	int k;
+
+	/**
+	 * Given $pmaaddr, let k = # of trailing 1s of $pmaaddr
+	 * size = 2 ^ (k + 3)
+	 * start = 4 * ($pmaaddr - (size / 8) + 1)
+	 */
+	pmaaddr = andes_pma_read_num(CSR_PMAADDR0 + entry_id);
+	k = sbi_ffz(pmaaddr);
+	*size = 1 << (k + 3);
+	*start = (pmaaddr - (1 << k) + 1) << 2;
+}
+
+static bool has_pma_region_overlap(unsigned long start, unsigned long size)
+{
+	unsigned long _start, _size, _end, end;
+	char pmaxcfg;
+
+	end = start + size - 1;
+	for (int i = 0; i < ANDES_MAX_PMA_REGIONS; i++) {
+		pmaxcfg = get_pmaxcfg(i);
+		if (is_pma_entry_disable(pmaxcfg))
+			continue;
+
+		decode_pmaaddrx(i, &_start, &_size);
+		_end = _start + _size - 1;
+
+		if (MAX(start, _start) <= MIN(end, _end)) {
+			sbi_printf(
+				"ERROR %s(): %#lx ~ %#lx overlaps with PMA%d: %#lx ~ %#lx\n",
+				__func__, start, end, i, _start, _end);
+			return true;
+		}
 	}
 
-	return ret;
-
-#undef switchcase_pma_read_16
-#undef switchcase_pma_read_8
-#undef switchcase_pma_read_4
-#undef switchcase_pma_read_2
-#undef switchcase_pma_read
+	return false;
 }
 
 static unsigned long andes_pma_setup(const struct andes_pma_region *pma_region,
@@ -144,41 +188,20 @@ static unsigned long andes_pma_setup(const struct andes_pma_region *pma_region,
 {
 	unsigned long size = pma_region->size;
 	unsigned long addr = pma_region->pa;
-	unsigned int pma_cfg_addr;
-	unsigned long pmacfg_val;
 	unsigned long pmaaddr;
-	char *pmaxcfg;
 
-	/* Check for 4KiB granularity */
-	if (size < (1 << 12))
+	/* Check for a 4KiB granularity NAPOT region*/
+	if (size < ANDES_PMA_GRANULARITY || not_napot(addr, size) ||
+	    !(pma_region->flags & ANDES_PMACFG_ETYP_NAPOT))
 		return SBI_EINVAL;
 
-	/* Check size is power of 2 */
-	if (size & (size - 1))
-		return SBI_EINVAL;
-
-	if (entry_id > 15)
-		return SBI_EINVAL;
-
-	if (!(pma_region->flags & ANDES_PMACFG_ETYP_NAPOT))
-		return SBI_EINVAL;
-
-	if ((addr & (size - 1)) != 0)
-		return SBI_EINVAL;
-
-	pma_cfg_addr = entry_id / 8 ? CSR_PMACFG0 + 2 : CSR_PMACFG0;
-	pmacfg_val = andes_pma_read_cfg(pma_cfg_addr);
-	pmaxcfg = (char *)&pmacfg_val + (entry_id % 8);
-	*pmaxcfg = 0;
-	*pmaxcfg = pma_region->flags;
-
-	andes_pma_write_cfg(pma_cfg_addr, pmacfg_val);
+	set_pmaxcfg(entry_id, pma_region->flags);
 
 	pmaaddr = (addr >> 2) + (size >> 3) - 1;
 
-	andes_pma_write_addr(CSR_PMAADDR0 + entry_id, pmaaddr);
+	andes_pma_write_num(CSR_PMAADDR0 + entry_id, pmaaddr);
 
-	return andes_pma_read_addr(CSR_PMAADDR0 + entry_id) == pmaaddr ?
+	return andes_pma_read_num(CSR_PMAADDR0 + entry_id) == pmaaddr ?
 	       pmaaddr : SBI_EINVAL;
 }
 
@@ -202,19 +225,20 @@ static int andes_fdt_pma_resv(void *fdt, const struct andes_pma_region *pma,
 
 	if (na > 1 && addr_high) {
 		sbi_snprintf(name, sizeof(name),
-			     "pma_resv%d@%x,%x", index,
-			     addr_high, addr_low);
+			     "pma_resv%d@%x,%x",
+			     index, addr_high, addr_low);
 	} else {
 		sbi_snprintf(name, sizeof(name),
-			     "pma_resv%d@%x", index,
-			     addr_low);
+			     "pma_resv%d@%x",
+			     index, addr_low);
 	}
 	subnode = fdt_add_subnode(fdt, parent, name);
 	if (subnode < 0)
 		return subnode;
 
 	if (pma->shared_dma) {
-		err = fdt_setprop_string(fdt, subnode, "compatible", "shared-dma-pool");
+		err = fdt_setprop_string(fdt, subnode, "compatible",
+					 "shared-dma-pool");
 		if (err < 0)
 			return err;
 	}
@@ -259,14 +283,14 @@ static int andes_fdt_reserved_memory_fixup(void *fdt,
 {
 	int parent;
 
-	/* try to locate the reserved memory node */
+	/* Try to locate the reserved memory node */
 	parent = fdt_path_offset(fdt, "/reserved-memory");
 	if (parent < 0) {
 		int na = fdt_address_cells(fdt, 0);
 		int ns = fdt_size_cells(fdt, 0);
 		int err;
 
-		/* if such node does not exist, create one */
+		/* If such node does not exist, create one */
 		parent = fdt_add_subnode(fdt, 0, "reserved-memory");
 		if (parent < 0)
 			return parent;
@@ -287,14 +311,13 @@ static int andes_fdt_reserved_memory_fixup(void *fdt,
 	return andes_fdt_pma_resv(fdt, pma, entry, parent);
 }
 
-int andes_pma_setup_regions(const struct andes_pma_region *pma_regions,
+int andes_pma_setup_regions(void *fdt,
+			    const struct andes_pma_region *pma_regions,
 			    unsigned int pma_regions_count)
 {
-	unsigned long mmsc = csr_read(CSR_MMSC_CFG);
 	unsigned int dt_populate_cnt;
 	unsigned int i, j;
 	unsigned long pa;
-	void *fdt;
 	int ret;
 
 	if (!pma_regions || !pma_regions_count)
@@ -303,29 +326,24 @@ int andes_pma_setup_regions(const struct andes_pma_region *pma_regions,
 	if (pma_regions_count > ANDES_MAX_PMA_REGIONS)
 		return SBI_EINVAL;
 
-	if ((mmsc & MMSC_CFG_PPMA_MASK) == 0)
+	if (!andes_sbi_probe_pma())
 		return SBI_ENOTSUPP;
 
 	/* Configure the PMA regions */
+	dt_populate_cnt = 0;
 	for (i = 0; i < pma_regions_count; i++) {
 		pa = andes_pma_setup(&pma_regions[i], i);
 		if (pa == SBI_EINVAL)
 			return SBI_EINVAL;
-	}
-
-	dt_populate_cnt = 0;
-	for (i = 0; i < pma_regions_count; i++) {
-		if (!pma_regions[i].dt_populate)
-			continue;
-		dt_populate_cnt++;
+		else if (pma_regions[i].dt_populate)
+			dt_populate_cnt++;
 	}
 
 	if (!dt_populate_cnt)
 		return 0;
 
-	fdt = fdt_get_address();
-
-	ret = fdt_open_into(fdt, fdt, fdt_totalsize(fdt) + (64 * dt_populate_cnt));
+	ret = fdt_open_into(fdt, fdt,
+			    fdt_totalsize(fdt) + (64 * dt_populate_cnt));
 	if (ret < 0)
 		return ret;
 
@@ -333,10 +351,91 @@ int andes_pma_setup_regions(const struct andes_pma_region *pma_regions,
 		if (!pma_regions[i].dt_populate)
 			continue;
 
-		ret = andes_fdt_reserved_memory_fixup(fdt, &pma_regions[i], j++);
+		ret = andes_fdt_reserved_memory_fixup(fdt,
+						      &pma_regions[i],
+						      j++);
 		if (ret)
 			return ret;
 	}
 
 	return 0;
+}
+
+bool andes_sbi_probe_pma(void)
+{
+	return (csr_read(CSR_MMSC_CFG) & MMSC_CFG_PPMA_MASK) ? true : false;
+}
+
+int andes_sbi_set_pma(unsigned long pa, unsigned long size, u8 flags)
+{
+	unsigned int entry_id;
+	unsigned long rc;
+	char pmaxcfg;
+	struct andes_pma_region region;
+
+	if (!andes_sbi_probe_pma()) {
+		sbi_printf("ERROR %s(): Platform does not support PPMA.\n",
+			   __func__);
+		return SBI_ERR_NOT_SUPPORTED;
+	}
+
+	if (has_pma_region_overlap(pa, size))
+		return SBI_ERR_INVALID_PARAM;
+
+	for (entry_id = 0; entry_id < ANDES_MAX_PMA_REGIONS; entry_id++) {
+		pmaxcfg = get_pmaxcfg(entry_id);
+		if (is_pma_entry_disable(pmaxcfg)) {
+			region.pa = pa;
+			region.size = size;
+			region.flags = flags;
+			break;
+		}
+	}
+
+	if (entry_id == ANDES_MAX_PMA_REGIONS) {
+		sbi_printf("ERROR %s(): All PMA entries have run out\n",
+			   __func__);
+		return SBI_ERR_FAILED;
+	}
+
+	rc = andes_pma_setup(&region, entry_id);
+	if (rc == SBI_EINVAL) {
+		sbi_printf("ERROR %s(): Failed to set PMAADDR%d\n",
+			   __func__, entry_id);
+		return SBI_ERR_FAILED;
+	}
+
+	return SBI_SUCCESS;
+}
+
+int andes_sbi_free_pma(unsigned long pa)
+{
+	unsigned long start, size;
+	char pmaxcfg;
+
+	if (!andes_sbi_probe_pma()) {
+		sbi_printf("ERROR %s(): Platform does not support PPMA.\n",
+			   __func__);
+		return SBI_ERR_NOT_SUPPORTED;
+	}
+
+	for (int i = 0; i < ANDES_MAX_PMA_REGIONS; i++) {
+		pmaxcfg = get_pmaxcfg(i);
+		if (is_pma_entry_disable(pmaxcfg))
+			continue;
+
+		decode_pmaaddrx(i, &start, &size);
+		if (start != pa)
+			continue;
+
+		set_pmaxcfg(i, ANDES_PMACFG_ETYP_OFF);
+		andes_pma_write_num(CSR_PMAADDR0 + i, 0);
+
+		return SBI_SUCCESS;
+	}
+
+	sbi_printf("ERROR %s(): Failed to find the entry with PA %#lx\n",
+		   __func__, pa);
+
+	return SBI_ERR_FAILED;
 }

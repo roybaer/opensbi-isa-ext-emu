@@ -15,9 +15,9 @@
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_system.h>
 #include <sbi/sbi_timer.h>
+#include <sbi_utils/fdt/fdt_driver.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/gpio/fdt_gpio.h>
-#include <sbi_utils/reset/fdt_reset.h>
 
 struct gpio_reset {
 	struct gpio_pin pin;
@@ -113,7 +113,7 @@ static struct sbi_system_reset_device gpio_restart = {
 	.system_reset = gpio_system_restart
 };
 
-static int gpio_reset_init(void *fdt, int nodeoff,
+static int gpio_reset_init(const void *fdt, int nodeoff,
 			   const struct fdt_match *match)
 {
 	int rc, len;
@@ -153,7 +153,7 @@ static const struct fdt_match gpio_poweroff_match[] = {
 	{ },
 };
 
-struct fdt_reset fdt_poweroff_gpio = {
+const struct fdt_driver fdt_poweroff_gpio = {
 	.match_table = gpio_poweroff_match,
 	.init = gpio_reset_init,
 };
@@ -163,7 +163,7 @@ static const struct fdt_match gpio_reset_match[] = {
 	{ },
 };
 
-struct fdt_reset fdt_reset_gpio = {
+const struct fdt_driver fdt_reset_gpio = {
 	.match_table = gpio_reset_match,
 	.init = gpio_reset_init,
 };

@@ -60,9 +60,9 @@ static void sifive_gpio_set(struct gpio_pin *gp, int value)
 	writel(v, (volatile void *)(chip->addr + SIFIVE_GPIO_OUTVAL));
 }
 
-extern struct fdt_gpio fdt_gpio_sifive;
+const struct fdt_gpio fdt_gpio_sifive;
 
-static int sifive_gpio_init(void *fdt, int nodeoff, u32 phandle,
+static int sifive_gpio_init(const void *fdt, int nodeoff,
 			    const struct fdt_match *match)
 {
 	int rc;
@@ -81,7 +81,7 @@ static int sifive_gpio_init(void *fdt, int nodeoff, u32 phandle,
 
 	chip->addr = addr;
 	chip->chip.driver = &fdt_gpio_sifive;
-	chip->chip.id = phandle;
+	chip->chip.id = nodeoff;
 	chip->chip.ngpio = SIFIVE_GPIO_PINS_DEF;
 	chip->chip.direction_output = sifive_gpio_direction_output;
 	chip->chip.set = sifive_gpio_set;
@@ -99,8 +99,10 @@ static const struct fdt_match sifive_gpio_match[] = {
 	{ },
 };
 
-struct fdt_gpio fdt_gpio_sifive = {
-	.match_table = sifive_gpio_match,
+const struct fdt_gpio fdt_gpio_sifive = {
+	.driver = {
+		.match_table = sifive_gpio_match,
+		.init = sifive_gpio_init,
+	},
 	.xlate = fdt_gpio_simple_xlate,
-	.init = sifive_gpio_init,
 };
