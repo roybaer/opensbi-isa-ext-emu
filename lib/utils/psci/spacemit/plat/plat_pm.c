@@ -11,7 +11,6 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi_utils/psci/plat/arm/common/arm_def.h>
-#include <sbi_utils/irqchip/fdt_irqchip_plic.h>
 #include <sbi_utils/cache/cacheflush.h>
 #include "underly_implement.h"
 #include "../../psci_private.h"
@@ -36,7 +35,7 @@ static void wake_idle_harts(struct sbi_scratch *scratch, u32 hartid)
 	/* Send an IPI to all HARTs of the cluster that waiting for waked up */
 	for (u32 i = 0; i < PLATFORM_MAX_CPUS_PER_CLUSTER * PLATFORM_CLUSTER_COUNT; i++) {
 		if (i != hartid) {
-			sbi_hartmask_set_hart(i, &psciipi_wait_hmask);
+			sbi_hartmask_set_hartid(i, &psciipi_wait_hmask);
 			sbi_ipi_raw_send(i);
 		}
 	}
@@ -146,11 +145,11 @@ static void spacemit_pwr_domain_pwr_down_wfi(const psci_power_state_t *target_st
 
 		spin_lock(&psciipi_lock);
 
-		if (sbi_hartmask_test_hart(hartid, &psciipi_wait_hmask)) {
+		if (sbi_hartmask_test_hartid(hartid, &psciipi_wait_hmask)) {
 
-			sbi_hartmask_clear_hart(hartid, &psciipi_wait_hmask);
+			sbi_hartmask_clear_hartid(hartid, &psciipi_wait_hmask);
 
-			sbi_ipi_raw_clear(hartid);
+			sbi_ipi_raw_clear();
 			/* Restore MIE CSR */
 			csr_write(CSR_MIE, saved_mie);
 

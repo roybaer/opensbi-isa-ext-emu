@@ -154,7 +154,7 @@ static void wakeup_other_core(void)
 /*
  * Platform early initialization.
  */
-static int spacemit_k1_early_init(bool cold_boot, const struct fdt_match *match)
+static int spacemit_k1_early_init(bool cold_boot, const void *fdt, const struct fdt_match *match)
 {
 	if (cold_boot) {
 		/* initiate cci */
@@ -194,7 +194,7 @@ static int spacemit_hart_stop(void)
 	return SBI_ENOTSUPP;
 }
 
-static int spacemit_hart_suspend(unsigned int suspend_type)
+static int spacemit_hart_suspend(unsigned int suspend_type, ulong mmode_resume_addr)
 {
 	psci_cpu_suspend(suspend_type, 0, 0);
 	return 0;
@@ -238,7 +238,7 @@ static struct sbi_system_suspend_device spacemit_system_suspend_ops = {
 /*
  * Platform final initialization.
  */
-static int spacemit_k1_final_init(bool cold_boot, const struct fdt_match *match)
+static int spacemit_k1_final_init(bool cold_boot, void *fdt, const struct fdt_match *match)
 {
 #ifdef CONFIG_ARM_PSCI_SUPPORT
 	/* for clod boot, we build the cpu topology structure */
