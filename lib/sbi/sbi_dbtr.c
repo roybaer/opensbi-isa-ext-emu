@@ -506,7 +506,7 @@ int sbi_dbtr_read_trig(unsigned long smode,
 {
 	struct sbi_dbtr_data_msg *xmit;
 	struct sbi_dbtr_trigger *trig;
-	struct sbi_dbtr_shmem_entry *entry;
+	union sbi_dbtr_shmem_entry *entry;
 	void *shmem_base = NULL;
 	struct sbi_dbtr_hart_triggers_state *hs = NULL;
 
@@ -523,16 +523,17 @@ int sbi_dbtr_read_trig(unsigned long smode,
 
 	shmem_base = hart_shmem_base(hs);
 
+	sbi_hart_map_saddr((unsigned long)shmem_base,
+			   trig_count * sizeof(*entry));
 	for_each_trig_entry(shmem_base, trig_count, typeof(*entry), entry) {
-		sbi_hart_map_saddr((unsigned long)entry, sizeof(*entry));
 		xmit = &entry->data;
 		trig = INDEX_TO_TRIGGER((_idx + trig_idx_base));
 		xmit->tstate = cpu_to_lle(trig->state);
 		xmit->tdata1 = cpu_to_lle(trig->tdata1);
 		xmit->tdata2 = cpu_to_lle(trig->tdata2);
 		xmit->tdata3 = cpu_to_lle(trig->tdata3);
-		sbi_hart_unmap_saddr();
 	}
+	sbi_hart_unmap_saddr();
 
 	return SBI_SUCCESS;
 }
@@ -541,7 +542,7 @@ int sbi_dbtr_install_trig(unsigned long smode,
 			  unsigned long trig_count, unsigned long *out)
 {
 	void *shmem_base = NULL;
-	struct sbi_dbtr_shmem_entry *entry;
+	union sbi_dbtr_shmem_entry *entry;
 	struct sbi_dbtr_data_msg *recv;
 	struct sbi_dbtr_id_msg *xmit;
 	unsigned long ctrl;
@@ -556,10 +557,11 @@ int sbi_dbtr_install_trig(unsigned long smode,
 		return SBI_ERR_NO_SHMEM;
 
 	shmem_base = hart_shmem_base(hs);
+	sbi_hart_map_saddr((unsigned long)shmem_base,
+			   trig_count * sizeof(*entry));
 
 	/* Check requested triggers configuration */
 	for_each_trig_entry(shmem_base, trig_count, typeof(*entry), entry) {
-		sbi_hart_map_saddr((unsigned long)entry, sizeof(*entry));
 		recv = (struct sbi_dbtr_data_msg *)(&entry->data);
 		ctrl = recv->tdata1;
 
@@ -574,11 +576,11 @@ int sbi_dbtr_install_trig(unsigned long smode,
 			sbi_hart_unmap_saddr();
 			return SBI_ERR_FAILED;
 		}
-		sbi_hart_unmap_saddr();
 	}
 
 	if (hs->available_trigs < trig_count) {
 		*out = hs->available_trigs;
+		sbi_hart_unmap_saddr();
 		return SBI_ERR_FAILED;
 	}
 
@@ -590,16 +592,15 @@ int sbi_dbtr_install_trig(unsigned long smode,
 		 */
 		trig = sbi_alloc_trigger();
 
-		sbi_hart_map_saddr((unsigned long)entry, sizeof(*entry));
-
 		recv = (struct sbi_dbtr_data_msg *)(&entry->data);
 		xmit = (struct sbi_dbtr_id_msg *)(&entry->id);
 
 		dbtr_trigger_setup(trig,  recv);
 		dbtr_trigger_enable(trig);
 		xmit->idx = cpu_to_lle(trig->index);
-		sbi_hart_unmap_saddr();
+
 	}
+	sbi_hart_unmap_saddr();
 
 	return SBI_SUCCESS;
 }
@@ -651,15 +652,11 @@ int sbi_dbtr_enable_trig(unsigned long trig_idx_base,
 }
 
 int sbi_dbtr_update_trig(unsigned long smode,
-			 unsigned long trig_idx_base,
-			 unsigned long trig_idx_mask)
+			 unsigned long trig_count)
 {
-	unsigned long trig_mask = trig_idx_mask << trig_idx_base;
-	unsigned long idx = trig_idx_base;
-	struct sbi_dbtr_data_msg *recv;
-	unsigned long uidx = 0;
+	unsigned long trig_idx;
 	struct sbi_dbtr_trigger *trig;
-	struct sbi_dbtr_shmem_entry *entry;
+	union sbi_dbtr_shmem_entry *entry;
 	void *shmem_base = NULL;
 	struct sbi_dbtr_hart_triggers_state *hs = NULL;
 
@@ -672,18 +669,28 @@ int sbi_dbtr_update_trig(unsigned long smode,
 
 	shmem_base = hart_shmem_base(hs);
 
-	for_each_set_bit_from(idx, &trig_mask, hs->total_trigs) {
-		trig = INDEX_TO_TRIGGER(idx);
+	if (trig_count >= hs->total_trigs)
+		return SBI_ERR_BAD_RANGE;
 
-		if (!(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED)))
+	for_each_trig_entry(shmem_base, trig_count, typeof(*entry), entry) {
+		sbi_hart_map_saddr((unsigned long)entry, sizeof(*entry));
+		trig_idx = entry->id.idx;
+
+		if (trig_idx >= hs->total_trigs) {
+			sbi_hart_unmap_saddr();
 			return SBI_ERR_INVALID_PARAM;
+		}
 
-		entry = (shmem_base + uidx * sizeof(*entry));
-		recv = &entry->data;
+		trig = INDEX_TO_TRIGGER(trig_idx);
 
-		trig->tdata2 = lle_to_cpu(recv->tdata2);
+		if (!(trig->state & RV_DBTR_BIT_MASK(TS, MAPPED))) {
+			sbi_hart_unmap_saddr();
+			return SBI_ERR_FAILED;
+		}
+
+		dbtr_trigger_setup(trig, &entry->data);
+		sbi_hart_unmap_saddr();
 		dbtr_trigger_enable(trig);
-		uidx++;
 	}
 
 	return SBI_SUCCESS;

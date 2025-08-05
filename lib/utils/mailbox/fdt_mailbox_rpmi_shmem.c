@@ -133,6 +133,8 @@ struct rpmi_shmem_mbox_controller {
 	/* Driver specific members */
 	u32 slot_size;
 	u32 queue_count;
+	u32 p2a_doorbell_sysmsi_index;
+	u32 a2p_doorbell_value;
 	struct rpmi_mb_regs *mb_regs;
 	struct smq_queue_ctx queue_ctx_tbl[RPMI_QUEUE_IDX_MAX_COUNT];
 	/* Mailbox framework related members */
@@ -247,7 +249,8 @@ static int __smq_rx(struct smq_queue_ctx *qctx, u32 slot_size,
 }
 
 static int __smq_tx(struct smq_queue_ctx *qctx, struct rpmi_mb_regs *mb_regs,
-		    u32 slot_size, u32 service_group_id, struct mbox_xfer *xfer)
+		    u32 a2p_doorbell_value, u32 slot_size, u32 service_group_id,
+		    struct mbox_xfer *xfer)
 {
 	u32 i, tailidx;
 	void *dst, *src;
@@ -299,7 +302,7 @@ static int __smq_tx(struct smq_queue_ctx *qctx, struct rpmi_mb_regs *mb_regs,
 
 	/* Ring the RPMI doorbell if present */
 	if (mb_regs)
-		writel(cpu_to_le32(1), &mb_regs->db_reg);
+		writel(a2p_doorbell_value, &mb_regs->db_reg);
 
 	return SBI_OK;
 }
@@ -363,8 +366,8 @@ static int smq_tx(struct rpmi_shmem_mbox_controller *mctl,
 	 */
 	do {
 		spin_lock(&qctx->queue_lock);
-		ret = __smq_tx(qctx, mctl->mb_regs, mctl->slot_size,
-				service_group_id, xfer);
+		ret = __smq_tx(qctx, mctl->mb_regs, mctl->a2p_doorbell_value,
+				mctl->slot_size, service_group_id, xfer);
 		spin_unlock(&qctx->queue_lock);
 		if (!ret)
 			return 0;
@@ -505,6 +508,9 @@ static int rpmi_shmem_mbox_get_attribute(struct mbox_chan *chan,
 	case RPMI_CHANNEL_ATTR_MAX_DATA_LEN:
 		*((u32 *)out_value) = RPMI_MSG_DATA_SIZE(mctl->slot_size);
 		break;
+	case RPMI_CHANNEL_ATTR_P2A_DOORBELL_SYSMSI_INDEX:
+		*((u32 *)out_value) = mctl->p2a_doorbell_sysmsi_index;
+		break;
 	case RPMI_CHANNEL_ATTR_TX_TIMEOUT:
 		*((u32 *)out_value) = RPMI_DEF_TX_TIMEOUT;
 		break;
@@ -516,6 +522,12 @@ static int rpmi_shmem_mbox_get_attribute(struct mbox_chan *chan,
 		break;
 	case RPMI_CHANNEL_ATTR_SERVICEGROUP_VERSION:
 		*((u32 *)out_value) = srvgrp_chan->servicegroup_version;
+		break;
+	case RPMI_CHANNEL_ATTR_IMPL_ID:
+		*((u32 *)out_value) = mctl->impl_id;
+		break;
+	case RPMI_CHANNEL_ATTR_IMPL_VERSION:
+		*((u32 *)out_value) = mctl->impl_version;
 		break;
 	default:
 		return SBI_ENOTSUPP;
@@ -574,9 +586,9 @@ static int rpmi_shmem_transport_init(struct rpmi_shmem_mbox_controller *mctl,
 				     const void *fdt, int nodeoff)
 {
 	const char *name;
+	const fdt32_t *prop;
 	int count, len, ret, qid;
 	uint64_t reg_addr, reg_size;
-	const fdt32_t *prop_slotsz;
 	struct smq_queue_ctx *qctx;
 
 	ret = fdt_node_check_compatible(fdt, nodeoff,
@@ -585,16 +597,24 @@ static int rpmi_shmem_transport_init(struct rpmi_shmem_mbox_controller *mctl,
 		return ret;
 
 	/* get queue slot size in bytes */
-	prop_slotsz = fdt_getprop(fdt, nodeoff, "riscv,slot-size", &len);
-	if (!prop_slotsz)
+	prop = fdt_getprop(fdt, nodeoff, "riscv,slot-size", &len);
+	if (!prop)
 		return SBI_ENOENT;
 
-	mctl->slot_size = fdt32_to_cpu(*prop_slotsz);
+	mctl->slot_size = fdt32_to_cpu(*prop);
 	if (mctl->slot_size < RPMI_SLOT_SIZE_MIN) {
 		sbi_printf("%s: slot_size < mimnum required message size\n",
 			   __func__);
 		mctl->slot_size = RPMI_SLOT_SIZE_MIN;
 	}
+
+	/* get p2a doorbell system MSI index */
+	prop = fdt_getprop(fdt, nodeoff, "riscv,p2a-doorbell-sysmsi-index", &len);
+	mctl->p2a_doorbell_sysmsi_index = prop ? fdt32_to_cpu(*prop) : -1U;
+
+	/* get a2p doorbell value */
+	prop = fdt_getprop(fdt, nodeoff, "riscv,a2p-doorbell-value", &len);
+	mctl->a2p_doorbell_value = prop ? fdt32_to_cpu(*prop) : 1;
 
 	/*
 	 * queue names count is taken as the number of queues
@@ -651,7 +671,7 @@ static int rpmi_shmem_transport_init(struct rpmi_shmem_mbox_controller *mctl,
 		SPIN_LOCK_INIT(qctx->queue_lock);
 	}
 
-	/* get the db-reg property name */
+	/* get the a2p-doorbell property name */
 	name = fdt_stringlist_get(fdt, nodeoff, "reg-names", qid, &len);
 	if (!name || (name && len < 0))
 		return len;
@@ -659,7 +679,7 @@ static int rpmi_shmem_transport_init(struct rpmi_shmem_mbox_controller *mctl,
 	/* fetch doorbell register address*/
 	ret = fdt_get_node_addr_size(fdt, nodeoff, qid, &reg_addr,
 				       &reg_size);
-	if (!ret && !(strncmp(name, "db-reg", strlen("db-reg")))) {
+	if (!ret && !(strncmp(name, "a2p-doorbell", strlen("a2p-doorbell")))) {
 		mctl->mb_regs = (void *)(unsigned long)reg_addr;
 		ret = sbi_domain_root_add_memrange(reg_addr, reg_size, reg_size,
 						   (SBI_DOMAIN_MEMREGION_MMIO |
@@ -799,7 +819,6 @@ struct fdt_mailbox fdt_mailbox_rpmi_shmem = {
 	.driver = {
 		.match_table = rpmi_shmem_mbox_match,
 		.init = rpmi_shmem_mbox_init,
-		.experimental = true,
 	},
 	.xlate = fdt_mailbox_simple_xlate,
 };

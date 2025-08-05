@@ -49,10 +49,10 @@ static void mstatus_init(struct sbi_scratch *scratch)
 
 	csr_write(CSR_MSTATUS, mstatus_val);
 
-	/* Disable user mode usage of all perf counters except default ones (CY, TM, IR) */
+	/* Disable user mode usage of all perf counters except TM */
 	if (misa_extension('S') &&
 	    sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10)
-		csr_write(CSR_SCOUNTEREN, 7);
+		csr_write(CSR_SCOUNTEREN, 0x02);
 
 	/**
 	 * OpenSBI doesn't use any PMU counters in M-mode.
@@ -85,11 +85,11 @@ static void mstatus_init(struct sbi_scratch *scratch)
 #endif
 	}
 
+	if (misa_extension('H'))
+		csr_write(CSR_HSTATUS, 0);
+
 	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SMSTATEEN)) {
-		mstateen_val = csr_read(CSR_MSTATEEN0);
-#if __riscv_xlen == 32
-		mstateen_val |= ((uint64_t)csr_read(CSR_MSTATEEN0H)) << 32;
-#endif
+		mstateen_val = 0;
 		mstateen_val |= SMSTATEEN_STATEN;
 		mstateen_val |= SMSTATEEN0_CONTEXT;
 		mstateen_val |= SMSTATEEN0_HSENVCFG;
@@ -105,17 +105,34 @@ static void mstatus_init(struct sbi_scratch *scratch)
 		else
 			mstateen_val &= ~(SMSTATEEN0_SVSLCT);
 
-		csr_write(CSR_MSTATEEN0, mstateen_val);
-#if __riscv_xlen == 32
-		csr_write(CSR_MSTATEEN0H, mstateen_val >> 32);
-#endif
+		if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SSCTR))
+			mstateen_val |= SMSTATEEN0_CTR;
+		else
+			mstateen_val &= ~SMSTATEEN0_CTR;
+
+		csr_write64(CSR_MSTATEEN0, mstateen_val);
+		csr_write64(CSR_MSTATEEN1, SMSTATEEN_STATEN);
+		csr_write64(CSR_MSTATEEN2, SMSTATEEN_STATEN);
+		csr_write64(CSR_MSTATEEN3, SMSTATEEN_STATEN);
+	}
+
+	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SSSTATEEN)) {
+		if (misa_extension('S')) {
+			csr_write(CSR_SSTATEEN0, 0);
+			csr_write(CSR_SSTATEEN1, 0);
+			csr_write(CSR_SSTATEEN2, 0);
+			csr_write(CSR_SSTATEEN3, 0);
+		}
+		if (misa_extension('H')) {
+			csr_write64(CSR_HSTATEEN0, (uint64_t)0);
+			csr_write64(CSR_HSTATEEN1, (uint64_t)0);
+			csr_write64(CSR_HSTATEEN2, (uint64_t)0);
+			csr_write64(CSR_HSTATEEN3, (uint64_t)0);
+		}
 	}
 
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
-		menvcfg_val = csr_read(CSR_MENVCFG);
-#if __riscv_xlen == 32
-		menvcfg_val |= ((uint64_t)csr_read(CSR_MENVCFGH)) << 32;
-#endif
+		menvcfg_val = csr_read64(CSR_MENVCFG);
 
 		/* Disable double trap by default */
 		menvcfg_val &= ~ENVCFG_DTE;
@@ -151,10 +168,7 @@ static void mstatus_init(struct sbi_scratch *scratch)
 		if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SVADE))
 			menvcfg_val &= ~ENVCFG_ADUE;
 
-		csr_write(CSR_MENVCFG, menvcfg_val);
-#if __riscv_xlen == 32
-		csr_write(CSR_MENVCFGH, menvcfg_val >> 32);
-#endif
+		csr_write64(CSR_MENVCFG, menvcfg_val);
 
 		/* Enable S-mode access to seed CSR */
 		if (sbi_hart_has_extension(scratch, SBI_HART_EXT_ZKR)) {
@@ -361,6 +375,9 @@ static void sbi_hart_smepmp_set(struct sbi_scratch *scratch,
 	unsigned long pmp_addr = reg->base >> PMP_SHIFT;
 
 	if (pmp_log2gran <= reg->order && pmp_addr < pmp_addr_max) {
+		sbi_platform_pmp_set(sbi_platform_ptr(scratch),
+				     pmp_idx, reg->flags, pmp_flags,
+				     reg->base, reg->order);
 		pmp_set(pmp_idx, pmp_flags, reg->base, reg->order);
 	} else {
 		sbi_printf("Can not configure pmp for domain %s because"
@@ -478,6 +495,9 @@ static int sbi_hart_oldpmp_configure(struct sbi_scratch *scratch,
 
 		pmp_addr = reg->base >> PMP_SHIFT;
 		if (pmp_log2gran <= reg->order && pmp_addr < pmp_addr_max) {
+			sbi_platform_pmp_set(sbi_platform_ptr(scratch),
+					     pmp_idx, reg->flags, pmp_flags,
+					     reg->base, reg->order);
 			pmp_set(pmp_idx++, pmp_flags, reg->base, reg->order);
 		} else {
 			sbi_printf("Can not configure pmp for domain %s because"
@@ -518,6 +538,9 @@ int sbi_hart_map_saddr(unsigned long addr, unsigned long size)
 		}
 	}
 
+	sbi_platform_pmp_set(sbi_platform_ptr(scratch), SBI_SMEPMP_RESV_ENTRY,
+			     SBI_DOMAIN_MEMREGION_SHARED_SURW_MRW,
+			     pmp_flags, base, order);
 	pmp_set(SBI_SMEPMP_RESV_ENTRY, pmp_flags, base, order);
 
 	return SBI_OK;
@@ -530,6 +553,7 @@ int sbi_hart_unmap_saddr(void)
 	if (!sbi_hart_has_extension(scratch, SBI_HART_EXT_SMEPMP))
 		return SBI_OK;
 
+	sbi_platform_pmp_disable(sbi_platform_ptr(scratch), SBI_SMEPMP_RESV_ENTRY);
 	return pmp_disable(SBI_SMEPMP_RESV_ENTRY);
 }
 
@@ -688,6 +712,9 @@ const struct sbi_hart_ext_data sbi_hart_ext[] = {
 	__SBI_HART_EXT_DATA(zicfilp, SBI_HART_EXT_ZICFILP),
 	__SBI_HART_EXT_DATA(zicfiss, SBI_HART_EXT_ZICFISS),
 	__SBI_HART_EXT_DATA(ssdbltrp, SBI_HART_EXT_SSDBLTRP),
+	__SBI_HART_EXT_DATA(smctr, SBI_HART_EXT_SMCTR),
+	__SBI_HART_EXT_DATA(ssctr, SBI_HART_EXT_SSCTR),
+	__SBI_HART_EXT_DATA(ssstateen, SBI_HART_EXT_SSSTATEEN),
 };
 
 _Static_assert(SBI_HART_EXT_MAX == array_size(sbi_hart_ext),
@@ -714,6 +741,10 @@ void sbi_hart_get_extensions_str(struct sbi_scratch *scratch,
 	sbi_memset(extensions_str, 0, nestr);
 
 	for_each_set_bit(ext, hfeatures->extensions, SBI_HART_EXT_MAX) {
+		if (offset + sbi_strlen(sbi_hart_ext[ext].name) + 1 > nestr) {
+			sbi_printf("%s:extension name is longer than buffer (error)\n", __func__);
+			break;
+		}
 		sbi_snprintf(extensions_str + offset,
 				 nestr - offset,
 				 "%s,", sbi_hart_ext[ext].name);
@@ -724,6 +755,20 @@ void sbi_hart_get_extensions_str(struct sbi_scratch *scratch,
 		extensions_str[offset - 1] = '\0';
 	else
 		sbi_strncpy(extensions_str, "none", nestr);
+}
+
+/**
+ * Check whether a particular CSR is present on the HART
+ *
+ * @param scratch pointer to the HART scratch space
+ * @param csr the CSR number to check
+ */
+bool sbi_hart_has_csr(struct sbi_scratch *scratch, enum sbi_hart_csrs csr)
+{
+	struct sbi_hart_features *hfeatures =
+			sbi_scratch_offset_ptr(scratch, hart_features_offset);
+
+	return __test_bit(csr, hfeatures->csrs);
 }
 
 static unsigned long hart_pmp_get_allowed_addr(void)
@@ -782,7 +827,6 @@ static int hart_detect_features(struct sbi_scratch *scratch)
 	struct sbi_hart_features *hfeatures =
 		sbi_scratch_offset_ptr(scratch, hart_features_offset);
 	unsigned long val, oldval;
-	bool has_zicntr = false;
 	int rc;
 
 	/* If hart features already detected then do nothing */
@@ -791,6 +835,7 @@ static int hart_detect_features(struct sbi_scratch *scratch)
 
 	/* Clear hart features */
 	sbi_memset(hfeatures->extensions, 0, sizeof(hfeatures->extensions));
+	sbi_memset(hfeatures->csrs, 0, sizeof(hfeatures->csrs));
 	hfeatures->pmp_count = 0;
 	hfeatures->mhpm_mask = 0;
 	hfeatures->priv_version = SBI_HART_PRIV_VER_UNKNOWN;
@@ -917,9 +962,6 @@ __pmp_skip:
 	/* Detect if hart supports sscofpmf */
 	__check_ext_csr(SBI_HART_PRIV_VER_1_11,
 			CSR_SCOUNTOVF, SBI_HART_EXT_SSCOFPMF);
-	/* Detect if hart supports time CSR */
-	__check_ext_csr(SBI_HART_PRIV_VER_UNKNOWN,
-			CSR_TIME, SBI_HART_EXT_ZICNTR);
 	/* Detect if hart has AIA local interrupt CSRs */
 	__check_ext_csr(SBI_HART_PRIV_VER_UNKNOWN,
 			CSR_MTOPI, SBI_HART_EXT_SMAIA);
@@ -929,6 +971,9 @@ __pmp_skip:
 	/* Detect if hart supports mstateen CSRs */
 	__check_ext_csr(SBI_HART_PRIV_VER_1_12,
 			CSR_MSTATEEN0, SBI_HART_EXT_SMSTATEEN);
+	/* Detect if hart supports sstateen CSRs */
+	__check_ext_csr(SBI_HART_PRIV_VER_1_12,
+			CSR_SSTATEEN0, SBI_HART_EXT_SSSTATEEN);
 	/* Detect if hart supports smcntrpmf */
 	__check_ext_csr(SBI_HART_PRIV_VER_1_12,
 			CSR_MCYCLECFG, SBI_HART_EXT_SMCNTRPMF);
@@ -938,8 +983,16 @@ __pmp_skip:
 
 #undef __check_ext_csr
 
-	/* Save trap based detection of Zicntr */
-	has_zicntr = sbi_hart_has_extension(scratch, SBI_HART_EXT_ZICNTR);
+#define __check_csr_existence(__csr, __csr_id)				\
+	csr_read_allowed(__csr, &trap);					\
+	if (!trap.cause)						\
+		__set_bit(__csr_id, hfeatures->csrs);
+
+	__check_csr_existence(CSR_CYCLE, SBI_HART_CSR_CYCLE);
+	__check_csr_existence(CSR_TIME, SBI_HART_CSR_TIME);
+	__check_csr_existence(CSR_INSTRET, SBI_HART_CSR_INSTRET);
+
+#undef __check_csr_existence
 
 	/* Let platform populate extensions */
 	rc = sbi_platform_extensions_init(sbi_platform_thishart_ptr(),
@@ -949,7 +1002,9 @@ __pmp_skip:
 
 	/* Zicntr should only be detected using traps */
 	__sbi_hart_update_extension(hfeatures, SBI_HART_EXT_ZICNTR,
-				    has_zicntr);
+			    sbi_hart_has_csr(scratch, SBI_HART_CSR_CYCLE) &&
+			    sbi_hart_has_csr(scratch, SBI_HART_CSR_TIME)  &&
+			    sbi_hart_has_csr(scratch, SBI_HART_CSR_INSTRET));
 
 	/* Extensions implied by other extensions and features */
 	if (hfeatures->mhpm_mask)

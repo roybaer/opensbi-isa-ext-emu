@@ -193,10 +193,13 @@ struct rpmi_message_args {
 enum rpmi_channel_attribute_id {
 	RPMI_CHANNEL_ATTR_PROTOCOL_VERSION = 0,
 	RPMI_CHANNEL_ATTR_MAX_DATA_LEN,
+	RPMI_CHANNEL_ATTR_P2A_DOORBELL_SYSMSI_INDEX,
 	RPMI_CHANNEL_ATTR_TX_TIMEOUT,
 	RPMI_CHANNEL_ATTR_RX_TIMEOUT,
 	RPMI_CHANNEL_ATTR_SERVICEGROUP_ID,
 	RPMI_CHANNEL_ATTR_SERVICEGROUP_VERSION,
+	RPMI_CHANNEL_ATTR_IMPL_ID,
+	RPMI_CHANNEL_ATTR_IMPL_VERSION,
 	RPMI_CHANNEL_ATTR_MAX,
 };
 
@@ -284,7 +287,6 @@ enum rpmi_sysmsi_service_id {
 struct rpmi_sysmsi_get_attributes_resp {
 	s32 status;
 	u32 sys_num_msi;
-	u32 p2a_db_index;
 	u32 flag0;
 	u32 flag1;
 };

@@ -31,31 +31,7 @@
 #include <sbi_utils/timer/fdt_timer.h>
 
 /* List of platform override modules generated at compile time */
-extern const struct platform_override *const platform_override_modules[];
-
-static const struct platform_override *generic_plat = NULL;
-static const struct fdt_match *generic_plat_match = NULL;
-
-static void fw_platform_lookup_special(const void *fdt, int root_offset)
-{
-	const struct platform_override *plat;
-	const struct fdt_match *match;
-	int pos;
-
-	for (pos = 0; platform_override_modules[pos]; pos++) {
-		plat = platform_override_modules[pos];
-		if (!plat->match_table)
-			continue;
-
-		match = fdt_match_node(fdt, root_offset, plat->match_table);
-		if (!match)
-			continue;
-
-		generic_plat = plat;
-		generic_plat_match = match;
-		break;
-	}
-}
+extern const struct fdt_driver *const platform_override_modules[];
 
 static u32 fw_platform_calculate_heap_size(u32 hart_count)
 {
@@ -171,22 +147,18 @@ unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
 	const void *fdt = (void *)arg1;
 	u32 hartid, hart_count = 0;
 	int rc, root_offset, cpus_offset, cpu_offset, len;
+	unsigned long cbom_block_size = 0;
+	unsigned long tmp = 0;
 
 	root_offset = fdt_path_offset(fdt, "/");
 	if (root_offset < 0)
 		goto fail;
 
-	fw_platform_lookup_special(fdt, root_offset);
-
-	if (generic_plat && generic_plat->fw_init)
-		generic_plat->fw_init(fdt, generic_plat_match);
+	fdt_driver_init_by_offset(fdt, root_offset, platform_override_modules);
 
 	model = fdt_getprop(fdt, root_offset, "model", &len);
 	if (model)
 		sbi_strncpy(platform.name, model, sizeof(platform.name) - 1);
-
-	if (generic_plat && generic_plat->features)
-		platform.features = generic_plat->features(generic_plat_match);
 
 	cpus_offset = fdt_path_offset(fdt, "/cpus");
 	if (cpus_offset < 0)
@@ -204,11 +176,17 @@ unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
 			continue;
 
 		generic_hart_index2id[hart_count++] = hartid;
+
+		rc = fdt_parse_cbom_block_size(fdt, cpu_offset, &tmp);
+		if (rc)
+			continue;
+		cbom_block_size = MAX(tmp, cbom_block_size);
 	}
 
 	platform.hart_count = hart_count;
 	platform.heap_size = fw_platform_get_heap_size(fdt, hart_count);
 	platform_has_mlevel_imsic = fdt_check_imsic_mlevel(fdt);
+	platform.cbom_block_size = cbom_block_size;
 
 	fw_platform_coldboot_harts_init(fdt);
 
@@ -220,12 +198,8 @@ fail:
 		wfi();
 }
 
-static bool generic_cold_boot_allowed(u32 hartid)
+bool generic_cold_boot_allowed(u32 hartid)
 {
-	if (generic_plat && generic_plat->cold_boot_allowed)
-		return generic_plat->cold_boot_allowed(
-						hartid, generic_plat_match);
-
 	for (int i = 0; i < platform.hart_count; i++) {
 		if (hartid == generic_hart_index2id[i])
 			return bitmap_test(generic_coldboot_harts, i);
@@ -234,14 +208,14 @@ static bool generic_cold_boot_allowed(u32 hartid)
 	return false;
 }
 
-static int generic_nascent_init(void)
+int generic_nascent_init(void)
 {
 	if (platform_has_mlevel_imsic)
 		imsic_local_irqchip_init();
 	return 0;
 }
 
-static int generic_early_init(bool cold_boot)
+int generic_early_init(bool cold_boot)
 {
 	const void *fdt = fdt_get_address();
 	int rc;
@@ -257,22 +231,12 @@ static int generic_early_init(bool cold_boot)
 		fdt_driver_init_all(fdt, fdt_early_drivers);
 	}
 
-	if (!generic_plat || !generic_plat->early_init)
-		return 0;
-
-	return generic_plat->early_init(cold_boot, fdt, generic_plat_match);
+	return 0;
 }
 
-static int generic_final_init(bool cold_boot)
+int generic_final_init(bool cold_boot)
 {
 	void *fdt = fdt_get_address_rw();
-	int rc;
-
-	if (generic_plat && generic_plat->final_init) {
-		rc = generic_plat->final_init(cold_boot, fdt, generic_plat_match);
-		if (rc)
-			return rc;
-	}
 
 	if (!cold_boot)
 		return 0;
@@ -281,60 +245,17 @@ static int generic_final_init(bool cold_boot)
 	fdt_fixups(fdt);
 	fdt_domain_fixup(fdt);
 
-	if (generic_plat && generic_plat->fdt_fixup) {
-		rc = generic_plat->fdt_fixup(fdt, generic_plat_match);
-		if (rc)
-			return rc;
-	}
-
 	return 0;
 }
 
-static bool generic_vendor_ext_check(void)
+int generic_extensions_init(struct sbi_hart_features *hfeatures)
 {
-	return (generic_plat && generic_plat->vendor_ext_provider) ?
-		true : false;
-}
-
-static int generic_vendor_ext_provider(long funcid,
-				       struct sbi_trap_regs *regs,
-				       struct sbi_ecall_return *out)
-{
-	return generic_plat->vendor_ext_provider(funcid, regs, out,
-						 generic_plat_match);
-}
-
-static void generic_early_exit(void)
-{
-	if (generic_plat && generic_plat->early_exit)
-		generic_plat->early_exit(generic_plat_match);
-}
-
-static void generic_final_exit(void)
-{
-	if (generic_plat && generic_plat->final_exit)
-		generic_plat->final_exit(generic_plat_match);
-}
-
-static int generic_extensions_init(struct sbi_hart_features *hfeatures)
-{
-	int rc;
-
 	/* Parse the ISA string from FDT and enable the listed extensions */
-	rc = fdt_parse_isa_extensions(fdt_get_address(), current_hartid(),
-				      hfeatures->extensions);
-
-	if (rc)
-		return rc;
-
-	if (generic_plat && generic_plat->extensions_init)
-		return generic_plat->extensions_init(generic_plat_match,
-						     hfeatures);
-
-	return 0;
+	return fdt_parse_isa_extensions(fdt_get_address(), current_hartid(),
+					hfeatures->extensions);
 }
 
-static int generic_domains_init(void)
+int generic_domains_init(void)
 {
 	const void *fdt = fdt_get_address();
 	int offset, ret;
@@ -356,29 +277,19 @@ static int generic_domains_init(void)
 	return 0;
 }
 
-static u64 generic_tlbr_flush_limit(void)
+u64 generic_tlbr_flush_limit(void)
 {
-	if (generic_plat && generic_plat->tlbr_flush_limit)
-		return generic_plat->tlbr_flush_limit(generic_plat_match);
 	return SBI_PLATFORM_TLB_RANGE_FLUSH_LIMIT_DEFAULT;
 }
 
-static u32 generic_tlb_num_entries(void)
+u32 generic_tlb_num_entries(void)
 {
-	if (generic_plat && generic_plat->tlb_num_entries)
-		return generic_plat->tlb_num_entries(generic_plat_match);
-	return sbi_scratch_last_hartindex() + 1;
+	return sbi_hart_count();
 }
 
-static int generic_pmu_init(void)
+int generic_pmu_init(void)
 {
 	int rc;
-
-	if (generic_plat && generic_plat->pmu_init) {
-		rc = generic_plat->pmu_init(generic_plat_match);
-		if (rc)
-			return rc;
-	}
 
 	rc = fdt_pmu_setup(fdt_get_address());
 	if (rc && rc != SBI_ENOENT)
@@ -387,8 +298,7 @@ static int generic_pmu_init(void)
 	return 0;
 }
 
-static uint64_t generic_pmu_xlate_to_mhpmevent(uint32_t event_idx,
-					       uint64_t data)
+uint64_t generic_pmu_xlate_to_mhpmevent(uint32_t event_idx, uint64_t data)
 {
 	uint64_t evt_val = 0;
 
@@ -410,21 +320,18 @@ static uint64_t generic_pmu_xlate_to_mhpmevent(uint32_t event_idx,
 	return evt_val;
 }
 
-static int generic_mpxy_init(void)
+int generic_mpxy_init(void)
 {
 	const void *fdt = fdt_get_address();
 
-	fdt_mpxy_init(fdt);
-	return 0;
+	return fdt_mpxy_init(fdt);
 }
 
-const struct sbi_platform_operations platform_ops = {
+struct sbi_platform_operations generic_platform_ops = {
 	.cold_boot_allowed	= generic_cold_boot_allowed,
 	.nascent_init		= generic_nascent_init,
 	.early_init		= generic_early_init,
 	.final_init		= generic_final_init,
-	.early_exit		= generic_early_exit,
-	.final_exit		= generic_final_exit,
 	.extensions_init	= generic_extensions_init,
 	.domains_init		= generic_domains_init,
 	.irqchip_init		= fdt_irqchip_init,
@@ -435,8 +342,6 @@ const struct sbi_platform_operations platform_ops = {
 	.get_tlb_num_entries	= generic_tlb_num_entries,
 	.timer_init		= fdt_timer_init,
 	.mpxy_init		= generic_mpxy_init,
-	.vendor_ext_check	= generic_vendor_ext_check,
-	.vendor_ext_provider	= generic_vendor_ext_provider,
 };
 
 struct sbi_platform platform = {
@@ -450,5 +355,5 @@ struct sbi_platform platform = {
 	.hart_index2id		= generic_hart_index2id,
 	.hart_stack_size	= SBI_PLATFORM_DEFAULT_HART_STACK_SIZE,
 	.heap_size		= SBI_PLATFORM_DEFAULT_HEAP_SIZE(0),
-	.platform_ops_addr	= (unsigned long)&platform_ops
+	.platform_ops_addr	= (unsigned long)&generic_platform_ops
 };

@@ -32,7 +32,8 @@
 #define MSTATUS_TVM			_UL(0x00100000)
 #define MSTATUS_TW			_UL(0x00200000)
 #define MSTATUS_TSR			_UL(0x00400000)
-#define MSTATUS_SPELP		_UL(0x00800000)
+#define MSTATUS_SPELP			_UL(0x00800000)
+#define MSTATUS_SDT			_UL(0x01000000)
 #define MSTATUS32_SD			_UL(0x80000000)
 #if __riscv_xlen == 64
 #define MSTATUS_UXL			_ULL(0x0000000300000000)
@@ -84,6 +85,8 @@
 #define HSTATUS_SPV			_UL(0x00000080)
 #define HSTATUS_GVA			_UL(0x00000040)
 #define HSTATUS_VSBE			_UL(0x00000020)
+
+#define MTVEC_MODE			_UL(0x00000003)
 
 #define MCAUSE_IRQ_MASK			(_UL(1) << (__riscv_xlen - 1))
 
@@ -374,6 +377,17 @@
 #define CSR_SSTATEEN1			0x10D
 #define CSR_SSTATEEN2			0x10E
 #define CSR_SSTATEEN3			0x10F
+
+/* Machine-Level Control transfer records CSRs */
+#define CSR_MCTRCTL                     0x34e
+
+/* Supervisor-Level Control transfer records CSRs */
+#define CSR_SCTRCTL                     0x14e
+#define CSR_SCTRSTATUS                  0x14f
+#define CSR_SCTRDEPTH                   0x15f
+
+/* VS-Level Control transfer records CSRs */
+#define CSR_VSCTRCTL                    0x24e
 
 /* ===== Hypervisor-level CSRs ===== */
 
@@ -801,6 +815,8 @@
 #define SMSTATEEN0_CS			(_ULL(1) << SMSTATEEN0_CS_SHIFT)
 #define SMSTATEEN0_FCSR_SHIFT		1
 #define SMSTATEEN0_FCSR			(_ULL(1) << SMSTATEEN0_FCSR_SHIFT)
+#define SMSTATEEN0_CTR_SHIFT		54
+#define SMSTATEEN0_CTR			(_ULL(1) << SMSTATEEN0_CTR_SHIFT)
 #define SMSTATEEN0_CONTEXT_SHIFT	57
 #define SMSTATEEN0_CONTEXT		(_ULL(1) << SMSTATEEN0_CONTEXT_SHIFT)
 #define SMSTATEEN0_IMSIC_SHIFT		58
@@ -972,13 +988,14 @@
 #define INSN_MATCH_VS4RV		0x62800027
 #define INSN_MATCH_VS8RV		0xe2800027
 
-#define INSN_MASK_VECTOR_LOAD_STORE	0x7f
-#define INSN_MATCH_VECTOR_LOAD		0x07
-#define INSN_MATCH_VECTOR_STORE		0x27
+#define INSN_OPCODE_MASK		0x7f
+#define INSN_OPCODE_VECTOR_LOAD		0x07
+#define INSN_OPCODE_VECTOR_STORE	0x27
+#define INSN_OPCODE_AMO			0x2f
 
 #define IS_VECTOR_LOAD_STORE(insn) \
-	((((insn) & INSN_MASK_VECTOR_LOAD_STORE) == INSN_MATCH_VECTOR_LOAD) || \
-	(((insn) & INSN_MASK_VECTOR_LOAD_STORE) == INSN_MATCH_VECTOR_STORE))
+	((((insn) & INSN_OPCODE_MASK) == INSN_OPCODE_VECTOR_LOAD) || \
+	(((insn) & INSN_OPCODE_MASK) == INSN_OPCODE_VECTOR_STORE))
 
 #define IS_VECTOR_INSN_MATCH(insn, match, mask) \
 	(((insn) & (mask)) == ((match) & (mask)))
@@ -1272,6 +1289,19 @@
 #error "Unexpected __riscv_xlen"
 #endif
 
+#define MASK_FUNCT3			0x7000
+#define SHIFT_FUNCT3			12
+
+#define MASK_RS1			0xf8000
+#define MASK_RS2			0x1f00000
+#define MASK_RD				0xf80
+
+#define MASK_CSR			0xfff00000
+#define SHIFT_CSR			20
+
+#define MASK_AQRL			0x06000000
+#define SHIFT_AQRL			25
+
 #define VM_MASK				0x1
 #define VIEW_MASK				0x3
 #define VSEW_MASK				0x3
@@ -1288,13 +1318,6 @@
 	 ((insn) & INSN_32BIT_MASK) != INSN_32BIT_MASK)
 
 #define INSN_LEN(insn)			(INSN_IS_16BIT(insn) ? 2 : 4)
-
-#if __riscv_xlen == 64
-#define LOG_REGBYTES			3
-#else
-#define LOG_REGBYTES			2
-#endif
-#define REGBYTES			(1 << LOG_REGBYTES)
 
 #define SH_VSEW			3
 #define SH_VIEW			12
@@ -1330,27 +1353,17 @@
 #define SHIFT_RIGHT(x, y)		\
 	((y) < 0 ? ((x) << -(y)) : ((x) >> (y)))
 
-#define REG_MASK			\
-	((1 << (5 + LOG_REGBYTES)) - (1 << LOG_REGBYTES))
-
-#define REG_OFFSET(insn, pos)		\
-	(SHIFT_RIGHT((insn), (pos) - LOG_REGBYTES) & REG_MASK)
-
-#define REG_PTR(insn, pos, regs)	\
-	(ulong *)((ulong)(regs) + REG_OFFSET(insn, pos))
-
-#define GET_RM(insn)			((insn & MASK_FUNCT3) >> SHIFT_FUNCT3)
-
-#define GET_RS1_NUM(insn)		((insn & MASK_RS1) >> 15)
+#define GET_FUNC3(insn)			((insn & MASK_FUNCT3) >> SHIFT_FUNCT3)
+#define GET_RM(insn)			GET_FUNC3(insn)
+#define GET_RS1_NUM(insn)		((insn & MASK_RS1) >> SH_RS1)
+#define GET_RS2_NUM(insn)		((insn & MASK_RS2) >> SH_RS2)
+#define GET_RS1S_NUM(insn)		RVC_RS1S(insn)
+#define GET_RS2S_NUM(insn)		RVC_RS2S(insn)
+#define GET_RS2C_NUM(insn)		RVC_RS2(insn)
+#define GET_RD_NUM(insn)		((insn & MASK_RD) >> SH_RD)
 #define GET_CSR_NUM(insn)		((insn & MASK_CSR) >> SHIFT_CSR)
+#define GET_AQRL(insn)			((insn & MASK_AQRL) >> SHIFT_AQRL)
 
-#define GET_RS1(insn, regs)		(*REG_PTR(insn, SH_RS1, regs))
-#define GET_RS2(insn, regs)		(*REG_PTR(insn, SH_RS2, regs))
-#define GET_RS1S(insn, regs)		(*REG_PTR(RVC_RS1S(insn), 0, regs))
-#define GET_RS2S(insn, regs)		(*REG_PTR(RVC_RS2S(insn), 0, regs))
-#define GET_RS2C(insn, regs)		(*REG_PTR(insn, SH_RS2C, regs))
-#define GET_SP(regs)			(*REG_PTR(2, 0, regs))
-#define SET_RD(insn, regs, val)		(*REG_PTR(insn, SH_RD, regs) = (val))
 #define IMM_I(insn)			((s32)(insn) >> 20)
 #define IMM_S(insn)			(((s32)(insn) >> 25 << 5) | \
 					 (s32)(((insn) >> 7) & 0x1f))
@@ -1366,13 +1379,6 @@
 #define GET_NF(insn)			(1 + ((insn >> 29) & 7))
 #define GET_VEMUL(vlmul, view, vsew)	((vlmul + view - vsew) & 7)
 #define GET_EMUL(vemul)		(1UL << ((vemul) >= 4 ? 0 : (vemul)))
-
-#define MASK_FUNCT3			0x7000
-#define MASK_RS1			0xf8000
-#define MASK_CSR			0xfff00000
-
-#define SHIFT_FUNCT3			12
-#define SHIFT_CSR			20
 
 #define CSRRW 1
 #define CSRRS 2

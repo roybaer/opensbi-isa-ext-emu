@@ -206,6 +206,12 @@ static int pmu_ctr_validate(struct sbi_pmu_hart_state *phs,
 	return event_idx_type;
 }
 
+static bool pmu_ctr_idx_validate(unsigned long cbase, unsigned long cmask)
+{
+	/* Do a basic sanity check of counter base & mask */
+	return cmask && cbase + sbi_fls(cmask) < total_ctrs;
+}
+
 int sbi_pmu_ctr_fw_read(uint32_t cidx, uint64_t *cval)
 {
 	int event_idx_type;
@@ -313,7 +319,7 @@ void sbi_pmu_ovf_irq()
 	 * on an irq being triggered
 	 */
 	csr_clear(CSR_MIE, sbi_pmu_irq_mask());
-	sbi_sse_inject_event(SBI_SSE_EVENT_LOCAL_PMU);
+	sbi_sse_inject_event(SBI_SSE_EVENT_LOCAL_PMU_OVERFLOW);
 }
 
 static int pmu_ctr_enable_irq_hw(int ctr_idx)
@@ -472,7 +478,7 @@ int sbi_pmu_ctr_start(unsigned long cbase, unsigned long cmask,
 	int i, cidx;
 	uint64_t edata;
 
-	if ((cbase + sbi_fls(cmask)) >= total_ctrs)
+	if (!pmu_ctr_idx_validate(cbase, cmask))
 		return ret;
 
 	if (flags & SBI_PMU_STOP_FLAG_TAKE_SNAPSHOT)
@@ -577,8 +583,8 @@ int sbi_pmu_ctr_stop(unsigned long cbase, unsigned long cmask,
 	uint32_t event_code;
 	int i, cidx;
 
-	if ((cbase + sbi_fls(cmask)) >= total_ctrs)
-		return SBI_EINVAL;
+	if (!pmu_ctr_idx_validate(cbase, cmask))
+		return ret;
 
 	if (flag & SBI_PMU_STOP_FLAG_TAKE_SNAPSHOT)
 		return SBI_ENO_SHMEM;
@@ -756,12 +762,13 @@ static int pmu_ctr_find_hw(struct sbi_pmu_hart_state *phs,
 		return SBI_EINVAL;
 
 	/**
-	 * If Sscof is present try to find the programmable counter for
-	 * cycle/instret as well.
+	 * If Sscofpmf or Andes PMU is present, try to find
+	 * the programmable counter for cycle/instret as well.
 	 */
 	fixed_ctr = pmu_ctr_find_fixed_hw(event_idx);
 	if (fixed_ctr >= 0 &&
-	    !sbi_hart_has_extension(scratch, SBI_HART_EXT_SSCOFPMF))
+	    !sbi_hart_has_extension(scratch, SBI_HART_EXT_SSCOFPMF) &&
+	    !sbi_hart_has_extension(scratch, SBI_HART_EXT_XANDESPMU))
 		return pmu_fixed_ctr_update_inhibit_bits(fixed_ctr, flags);
 
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_11)
@@ -862,8 +869,7 @@ int sbi_pmu_ctr_cfg_match(unsigned long cidx_base, unsigned long cidx_mask,
 	int ret, event_type, ctr_idx = SBI_ENOTSUPP;
 	u32 event_code;
 
-	/* Do a basic sanity check of counter base & mask */
-	if ((cidx_base + sbi_fls(cidx_mask)) >= total_ctrs)
+	if (!pmu_ctr_idx_validate(cidx_base, cidx_mask))
 		return SBI_EINVAL;
 
 	event_type = pmu_event_validate(phs, event_idx, event_data);
@@ -1120,24 +1126,17 @@ void sbi_pmu_exit(struct sbi_scratch *scratch)
 
 static void pmu_sse_enable(uint32_t event_id)
 {
-	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
 	unsigned long irq_mask = sbi_pmu_irq_mask();
 
-	phs->sse_enabled = true;
-	csr_clear(CSR_MIDELEG, irq_mask);
-	csr_clear(CSR_MIP, irq_mask);
 	csr_set(CSR_MIE, irq_mask);
 }
 
 static void pmu_sse_disable(uint32_t event_id)
 {
-	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
 	unsigned long irq_mask = sbi_pmu_irq_mask();
 
 	csr_clear(CSR_MIE, irq_mask);
 	csr_clear(CSR_MIP, irq_mask);
-	csr_set(CSR_MIDELEG, irq_mask);
-	phs->sse_enabled = false;
 }
 
 static void pmu_sse_complete(uint32_t event_id)
@@ -1145,7 +1144,25 @@ static void pmu_sse_complete(uint32_t event_id)
 	csr_set(CSR_MIE, sbi_pmu_irq_mask());
 }
 
+static void pmu_sse_register(uint32_t event_id)
+{
+	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
+
+	phs->sse_enabled = true;
+	csr_clear(CSR_MIDELEG, sbi_pmu_irq_mask());
+}
+
+static void pmu_sse_unregister(uint32_t event_id)
+{
+	struct sbi_pmu_hart_state *phs = pmu_thishart_state_ptr();
+
+	phs->sse_enabled = false;
+	csr_set(CSR_MIDELEG, sbi_pmu_irq_mask());
+}
+
 static const struct sbi_sse_cb_ops pmu_sse_cb_ops = {
+	.register_cb = pmu_sse_register,
+	.unregister_cb = pmu_sse_unregister,
 	.enable_cb = pmu_sse_enable,
 	.disable_cb = pmu_sse_disable,
 	.complete_cb = pmu_sse_complete,
@@ -1190,7 +1207,7 @@ int sbi_pmu_init(struct sbi_scratch *scratch, bool cold_boot)
 		total_ctrs = num_hw_ctrs + SBI_PMU_FW_CTR_MAX;
 
 		if (sbi_pmu_irq_bit() >= 0)
-			sbi_sse_add_event(SBI_SSE_EVENT_LOCAL_PMU, &pmu_sse_cb_ops);
+			sbi_sse_add_event(SBI_SSE_EVENT_LOCAL_PMU_OVERFLOW, &pmu_sse_cb_ops);
 	}
 
 	phs = pmu_get_hart_state_ptr(scratch);

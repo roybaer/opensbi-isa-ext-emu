@@ -154,7 +154,7 @@ static void wakeup_other_core(void)
 /*
  * Platform early initialization.
  */
-static int spacemit_k1_early_init(bool cold_boot, const void *fdt, const struct fdt_match *match)
+static int spacemit_k1_early_init(bool cold_boot)
 {
 	if (cold_boot) {
 		/* initiate cci */
@@ -238,7 +238,7 @@ static struct sbi_system_suspend_device spacemit_system_suspend_ops = {
 /*
  * Platform final initialization.
  */
-static int spacemit_k1_final_init(bool cold_boot, void *fdt, const struct fdt_match *match)
+static int spacemit_k1_final_init(bool cold_boot)
 {
 #ifdef CONFIG_ARM_PSCI_SUPPORT
 	/* for clod boot, we build the cpu topology structure */
@@ -253,7 +253,7 @@ static int spacemit_k1_final_init(bool cold_boot, void *fdt, const struct fdt_ma
 	return 0;
 }
 
-static bool spacemit_cold_boot_allowed(u32 hartid, const struct fdt_match *match)
+static bool spacemit_cold_boot_allowed(u32 hartid)
 {
 	/* enable core snoop */
 	csr_set(CSR_ML2SETUP, 1 << (hartid % PLATFORM_MAX_CPUS_PER_CLUSTER));
@@ -277,6 +277,15 @@ static bool spacemit_cold_boot_allowed(u32 hartid, const struct fdt_match *match
 				) ? true : false);
 }
 
+static int spacemit_k1_platform_init(const void *fdt, int nodeoff, const struct fdt_match *match)
+{
+	generic_platform_ops.early_init = spacemit_k1_early_init;
+	generic_platform_ops.final_init = spacemit_k1_final_init;
+	generic_platform_ops.cold_boot_allowed = spacemit_cold_boot_allowed;
+
+	return 0;
+}
+
 static const struct fdt_match spacemit_k1_match[] = {
 	{ .compatible = "spacemit,k1-pro" },
 	{ .compatible = "spacemit,k1x" },
@@ -285,9 +294,7 @@ static const struct fdt_match spacemit_k1_match[] = {
 	{ },
 };
 
-const struct platform_override spacemit_k1 = {
+const struct fdt_driver spacemit_k1 = {
 	.match_table = spacemit_k1_match,
-	.early_init = spacemit_k1_early_init,
-	.final_init = spacemit_k1_final_init,
-	.cold_boot_allowed = spacemit_cold_boot_allowed,
+	.init = spacemit_k1_platform_init,
 };

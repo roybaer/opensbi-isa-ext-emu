@@ -94,20 +94,26 @@ OPENSBI_VERSION_MINOR=`grep "define OPENSBI_VERSION_MINOR" $(include_dir)/sbi/sb
 OPENSBI_VERSION_GIT=
 
 # Detect 'git' presence before issuing 'git' commands
-GIT_AVAIL=$(shell command -v git 2> /dev/null)
+GIT_AVAIL := $(shell command -v git 2> /dev/null)
 ifneq ($(GIT_AVAIL),)
-GIT_DIR=$(shell git rev-parse --git-dir 2> /dev/null)
+GIT_DIR := $(shell git rev-parse --git-dir 2> /dev/null)
 ifneq ($(GIT_DIR),)
-OPENSBI_VERSION_GIT=$(shell if [ -d $(GIT_DIR) ]; then git describe 2> /dev/null; fi)
+OPENSBI_VERSION_GIT := $(shell if [ -d $(GIT_DIR) ]; then git describe 2> /dev/null; fi)
 endif
 endif
 
 # Setup compilation commands
 ifneq ($(LLVM),)
-CC		=	clang
-AR		=	llvm-ar
-LD		=	ld.lld
-OBJCOPY		=	llvm-objcopy
+ifneq ($(filter %/,$(LLVM)),)
+LLVM_PREFIX := $(LLVM)
+else ifneq ($(filter -%,$(LLVM)),)
+LLVM_SUFFIX := $(LLVM)
+endif
+
+CC		=	$(LLVM_PREFIX)clang$(LLVM_SUFFIX)
+AR		=	$(LLVM_PREFIX)llvm-ar$(LLVM_SUFFIX)
+LD		=	$(LLVM_PREFIX)ld.lld$(LLVM_SUFFIX)
+OBJCOPY		=	$(LLVM_PREFIX)llvm-objcopy$(LLVM_SUFFIX)
 else
 ifdef CROSS_COMPILE
 CC		=	$(CROSS_COMPILE)gcc
@@ -175,6 +181,11 @@ else
 USE_LD_FLAG	=	-fuse-ld=bfd
 endif
 
+REPRODUCIBLE ?= n
+ifeq ($(REPRODUCIBLE),y)
+REPRODUCIBLE_FLAGS		+=	-ffile-prefix-map=$(src_dir)=
+endif
+
 # Check whether the linker supports creating PIEs
 OPENSBI_LD_PIE := $(shell $(CC) $(CLANG_TARGET) $(RELAX_FLAG) $(USE_LD_FLAG) -fPIE -nostdlib -Wl,-pie -x c /dev/null -o /dev/null >/dev/null 2>&1 && echo y || echo n)
 
@@ -203,16 +214,18 @@ endif
 BUILD_INFO ?= n
 ifeq ($(BUILD_INFO),y)
 OPENSBI_BUILD_DATE_FMT = +%Y-%m-%d %H:%M:%S %z
+ifndef OPENSBI_BUILD_TIME_STAMP
 ifdef SOURCE_DATE_EPOCH
-	OPENSBI_BUILD_TIME_STAMP ?= $(shell date -u -d "@$(SOURCE_DATE_EPOCH)" \
+	OPENSBI_BUILD_TIME_STAMP := $(shell date -u -d "@$(SOURCE_DATE_EPOCH)" \
 		"$(OPENSBI_BUILD_DATE_FMT)" 2>/dev/null || \
 		date -u -r "$(SOURCE_DATE_EPOCH)" \
 		"$(OPENSBI_BUILD_DATE_FMT)" 2>/dev/null || \
 		date -u "$(OPENSBI_BUILD_DATE_FMT)")
 else
-	OPENSBI_BUILD_TIME_STAMP ?= $(shell date "$(OPENSBI_BUILD_DATE_FMT)")
+	OPENSBI_BUILD_TIME_STAMP := $(shell date "$(OPENSBI_BUILD_DATE_FMT)")
 endif
-OPENSBI_BUILD_COMPILER_VERSION=$(shell $(CC) -v 2>&1 | grep ' version ' | \
+endif
+OPENSBI_BUILD_COMPILER_VERSION := $(shell $(CC) -v 2>&1 | grep ' version ' | \
 	sed 's/[[:space:]]*$$//')
 endif
 
@@ -354,6 +367,7 @@ ifeq ($(BUILD_INFO),y)
 GENFLAGS	+=	-DOPENSBI_BUILD_TIME_STAMP="\"$(OPENSBI_BUILD_TIME_STAMP)\""
 GENFLAGS	+=	-DOPENSBI_BUILD_COMPILER_VERSION="\"$(OPENSBI_BUILD_COMPILER_VERSION)\""
 endif
+GENFLAGS	+=	-include $(include_dir)/sbi/sbi_visibility.h
 ifdef PLATFORM
 GENFLAGS	+=	-include $(KCONFIG_AUTOHEADER)
 endif
@@ -363,6 +377,8 @@ GENFLAGS	+=	$(firmware-genflags-y)
 
 CFLAGS		=	-g -Wall -Werror -ffreestanding -nostdlib -fno-stack-protector -fno-strict-aliasing -ffunction-sections -fdata-sections
 CFLAGS		+=	-fno-omit-frame-pointer -fno-optimize-sibling-calls
+CFLAGS		+=	-fno-asynchronous-unwind-tables -fno-unwind-tables
+CFLAGS		+=	$(REPRODUCIBLE_FLAGS)
 # Optionally supported flags
 ifeq ($(CC_SUPPORT_VECTOR),y)
 CFLAGS		+=	-DOPENSBI_CC_SUPPORT_VECTOR
@@ -388,6 +404,7 @@ CPPFLAGS	+=	$(firmware-cppflags-y)
 ASFLAGS		=	-g -Wall -nostdlib
 ASFLAGS		+=	-fno-omit-frame-pointer -fno-optimize-sibling-calls
 ASFLAGS		+=	-fPIE
+ASFLAGS		+=	$(REPRODUCIBLE_FLAGS)
 # Optionally supported flags
 ifeq ($(CC_SUPPORT_SAVE_RESTORE),y)
 ASFLAGS		+=	-mno-save-restore

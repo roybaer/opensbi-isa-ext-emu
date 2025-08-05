@@ -15,3 +15,9 @@ libsbi-objs-$(CONFIG_SBIUNIT) += tests/riscv_locks_test.o
 
 carray-sbi_unit_tests-$(CONFIG_SBIUNIT) += math_test_suite
 libsbi-objs-$(CONFIG_SBIUNIT) += tests/sbi_math_test.o
+
+carray-sbi_unit_tests-$(CONFIG_SBIUNIT) += ecall_test_suite
+libsbi-objs-$(CONFIG_SBIUNIT) += tests/sbi_ecall_test.o
+
+carray-sbi_unit_tests-$(CONFIG_SBIUNIT) += bitops_test_suite
+libsbi-objs-$(CONFIG_SBIUNIT) += tests/sbi_bitops_test.o

@@ -15,6 +15,7 @@
 #include <sbi/sbi_string.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_domain_context.h>
+#include <sbi/sbi_platform.h>
 #include <sbi/sbi_trap.h>
 
 /** Context representation for a hart within a domain */
@@ -53,31 +54,30 @@ struct hart_context {
 	bool initialized;
 };
 
-struct domain_context_priv {
-	/** Contexts for possible HARTs indexed by hartindex */
-	struct hart_context *hartindex_to_context_table[SBI_HARTMASK_MAX_BITS];
-};
-
-static struct sbi_domain_data dcpriv = {
-	.data_size = sizeof(struct domain_context_priv),
-};
+static struct sbi_domain_data dcpriv;
 
 static inline struct hart_context *hart_context_get(struct sbi_domain *dom,
 						    u32 hartindex)
 {
-	struct domain_context_priv *dcp = sbi_domain_data_ptr(dom, &dcpriv);
+	struct hart_context **dom_hartindex_to_context_table;
 
-	return (dcp && hartindex < SBI_HARTMASK_MAX_BITS) ?
-		dcp->hartindex_to_context_table[hartindex] : NULL;
+	dom_hartindex_to_context_table = sbi_domain_data_ptr(dom, &dcpriv);
+	if (!dom_hartindex_to_context_table || !sbi_hartindex_valid(hartindex))
+		return NULL;
+
+	return dom_hartindex_to_context_table[hartindex];
 }
 
 static void hart_context_set(struct sbi_domain *dom, u32 hartindex,
 			     struct hart_context *hc)
 {
-	struct domain_context_priv *dcp = sbi_domain_data_ptr(dom, &dcpriv);
+	struct hart_context **dom_hartindex_to_context_table;
 
-	if (dcp && hartindex < SBI_HARTMASK_MAX_BITS)
-		dcp->hartindex_to_context_table[hartindex] = hc;
+	dom_hartindex_to_context_table = sbi_domain_data_ptr(dom, &dcpriv);
+	if (!dom_hartindex_to_context_table || !sbi_hartindex_valid(hartindex))
+		return;
+
+	dom_hartindex_to_context_table[hartindex] = hc;
 }
 
 /** Macro to obtain the current hart's context pointer */
@@ -116,6 +116,7 @@ static void switch_to_next_domain_context(struct hart_context *ctx,
 
 	/* Reconfigure PMP settings for the new domain */
 	for (int i = 0; i < pmp_count; i++) {
+		sbi_platform_pmp_disable(sbi_platform_thishart_ptr(), i);
 		pmp_disable(i);
 	}
 	sbi_hart_pmp_configure(scratch);
@@ -232,6 +233,14 @@ int sbi_domain_context_exit(void)
 
 int sbi_domain_context_init(void)
 {
+	/**
+	 * Allocate per-domain and per-hart context data.
+	 * The data type is "struct hart_context **" whose memory space will be
+	 * dynamically allocated by domain_setup_data_one(). Calculate needed
+	 * size of memory space here.
+	 */
+	dcpriv.data_size = sizeof(struct hart_context *) * sbi_hart_count();
+
 	return sbi_domain_register_data(&dcpriv);
 }
 

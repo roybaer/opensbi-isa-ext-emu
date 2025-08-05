@@ -5,6 +5,7 @@
 #include <sbi/sbi_platform.h>
 #include <sbi_utils/psci/psci.h>
 #include <sbi_utils/cache/cacheflush.h>
+#include <sbi/sbi_hartmask.h>
 
 /*******************************************************************************
  * The following two data structures implement the power domain tree. The tree

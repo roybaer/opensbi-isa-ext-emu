@@ -12,7 +12,6 @@
 #include <sbi/riscv_io.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
-#include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/irqchip/fdt_irqchip.h>
@@ -75,12 +74,10 @@ static int irqchip_plic_update_context_map(const void *fdt, int nodeoff,
 static int irqchip_plic_cold_init(const void *fdt, int nodeoff,
 				  const struct fdt_match *match)
 {
-	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
-	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
 	int rc;
 	struct plic_data *pd;
 
-	pd = sbi_zalloc(PLIC_DATA_SIZE(plat->hart_count));
+	pd = sbi_zalloc(PLIC_DATA_SIZE(sbi_hart_count()));
 	if (!pd)
 		return SBI_ENOMEM;
 
@@ -107,16 +104,10 @@ fail_free_data:
 
 static const struct fdt_match irqchip_plic_match[] = {
 	{ .compatible = "andestech,nceplic100" },
+	{ .compatible = "riscv,plic0" },
 	{ .compatible = "sifive,plic-1.0.0" },
 	{ .compatible = "thead,c900-plic",
 	  .data = (void *)(PLIC_FLAG_THEAD_DELEGATION | PLIC_FLAG_ENABLE_PM) },
-
-	/*
-	 * We keep the generic RISC-V PLIC at the end.
-	 * This ensures we match against more specific options first.
-	 * (This is important if the PLIC has quirks, like the T-HEAD PLIC.)
-	 */
-	{ .compatible = "riscv,plic0" },
 	{ /* sentinel */ }
 };
 

@@ -90,7 +90,7 @@ struct sbi_dbtr_hart_triggers_state {
 	}while (0);
 
 /** SBI shared mem messages layout */
-struct sbi_dbtr_shmem_entry {
+union sbi_dbtr_shmem_entry {
 	struct sbi_dbtr_data_msg data;
 	struct sbi_dbtr_id_msg id;
 };
@@ -115,8 +115,7 @@ int sbi_dbtr_uninstall_trig(unsigned long trig_idx_base,
 int sbi_dbtr_enable_trig(unsigned long trig_idx_base,
 			 unsigned long trig_idx_mask);
 int sbi_dbtr_update_trig(unsigned long smode,
-			 unsigned long trig_idx_base,
-			 unsigned long trig_idx_mask);
+			 unsigned long trig_count);
 int sbi_dbtr_disable_trig(unsigned long trig_idx_base,
 			  unsigned long trig_idx_mask);
 

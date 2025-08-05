@@ -195,10 +195,12 @@ static SBI_SLIST_HEAD(supported_events, sse_event_info) =
  * events in order to return SBI_ERR_NOT_SUPPORTED for them.
  */
 static const uint32_t standard_events[] = {
-	SBI_SSE_EVENT_LOCAL_RAS,
+	SBI_SSE_EVENT_LOCAL_HIGH_PRIO_RAS,
 	SBI_SSE_EVENT_LOCAL_DOUBLE_TRAP,
-	SBI_SSE_EVENT_GLOBAL_RAS,
-	SBI_SSE_EVENT_LOCAL_PMU,
+	SBI_SSE_EVENT_GLOBAL_HIGH_PRIO_RAS,
+	SBI_SSE_EVENT_LOCAL_PMU_OVERFLOW,
+	SBI_SSE_EVENT_LOCAL_LOW_PRIO_RAS,
+	SBI_SSE_EVENT_GLOBAL_LOW_PRIO_RAS,
 	SBI_SSE_EVENT_LOCAL_SOFTWARE,
 	SBI_SSE_EVENT_GLOBAL_SOFTWARE,
 };
@@ -386,7 +388,7 @@ static int sse_event_set_hart_id_check(struct sbi_sse_event *e,
 	struct sbi_domain *hd = sbi_domain_thishart_ptr();
 
 	if (!sse_event_is_global(e))
-		return SBI_EBAD_RANGE;
+		return SBI_EDENIED;
 
 	if (!sbi_domain_is_assigned_hart(hd, sbi_hartid_to_hartindex(hartid)))
 		return SBI_EINVAL;
@@ -425,10 +427,12 @@ static int sse_event_set_attr_check(struct sbi_sse_event *e, uint32_t attr_id,
 
 		return sse_event_set_hart_id_check(e, val);
 	case SBI_SSE_ATTR_INTERRUPTED_FLAGS:
-		if (val & ~(SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPP |
-			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPIE |
+		if (val & ~(SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPP |
+			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPIE |
 			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_HSTATUS_SPV |
-			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_HSTATUS_SPVP))
+			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_HSTATUS_SPVP |
+			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPELP |
+			    SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SDT))
 			return SBI_EINVAL;
 		__attribute__((__fallthrough__));
 	case SBI_SSE_ATTR_INTERRUPTED_SEPC:
@@ -442,7 +446,13 @@ static int sse_event_set_attr_check(struct sbi_sse_event *e, uint32_t attr_id,
 
 		return SBI_OK;
 	default:
-		return SBI_EBAD_RANGE;
+		/*
+		 * Attribute range validity was already checked by
+		 * sbi_sse_attr_check(). If we end up here, attribute was not
+		 * handled by the above 'case' statements and thus it is
+		 * read-only.
+		 */
+		return SBI_EDENIED;
 	}
 }
 
@@ -510,10 +520,14 @@ static unsigned long sse_interrupted_flags(unsigned long mstatus)
 {
 	unsigned long hstatus, flags = 0;
 
-	if (mstatus & (MSTATUS_SPIE))
-		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPIE;
-	if (mstatus & (MSTATUS_SPP))
-		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPP;
+	if (mstatus & MSTATUS_SPIE)
+		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPIE;
+	if (mstatus & MSTATUS_SPP)
+		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPP;
+	if (mstatus & MSTATUS_SPELP)
+		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPELP;
+	if (mstatus & MSTATUS_SDT)
+		flags |= SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SDT;
 
 	if (misa_extension('H')) {
 		hstatus = csr_read(CSR_HSTATUS);
@@ -571,9 +585,13 @@ static void sse_event_inject(struct sbi_sse_event *e,
 	regs->a7 = e->attrs.entry.arg;
 	regs->mepc = e->attrs.entry.pc;
 
-	/* Return to S-mode with virtualization disabled */
-	regs->mstatus &= ~(MSTATUS_MPP | MSTATUS_SIE);
+	/*
+	 * Return to S-mode with virtualization disabled, not expected landing
+	 * pad, supervisor trap disabled.
+	 */
+	regs->mstatus &= ~(MSTATUS_MPP | MSTATUS_SIE | MSTATUS_SPELP);
 	regs->mstatus |= (PRV_S << MSTATUS_MPP_SHIFT);
+	regs->mstatus |= MSTATUS_SDT;
 
 #if __riscv_xlen == 64
 	regs->mstatus &= ~MSTATUS_MPV;
@@ -624,12 +642,20 @@ static void sse_event_resume(struct sbi_sse_event *e,
 		regs->mstatus |= MSTATUS_SIE;
 
 	regs->mstatus &= ~MSTATUS_SPIE;
-	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPIE)
+	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPIE)
 		regs->mstatus |= MSTATUS_SPIE;
 
 	regs->mstatus &= ~MSTATUS_SPP;
-	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_STATUS_SPP)
+	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPP)
 		regs->mstatus |= MSTATUS_SPP;
+
+	regs->mstatus &= ~MSTATUS_SPELP;
+	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SPELP)
+		regs->mstatus |= MSTATUS_SPELP;
+
+	regs->mstatus &= ~MSTATUS_SDT;
+	if (i_ctx->flags & SBI_SSE_ATTR_INTERRUPTED_FLAGS_SSTATUS_SDT)
+		regs->mstatus |= MSTATUS_SDT;
 
 	regs->a7 = i_ctx->a7;
 	regs->a6 = i_ctx->a6;
@@ -926,7 +952,7 @@ int sbi_sse_add_event(uint32_t event_id, const struct sbi_sse_cb_ops *cb_ops)
 	/* Do not allow adding an event twice */
 	info = sse_event_info_get(event_id);
 	if (info)
-		return SBI_EINVAL;
+		return SBI_EALREADY;
 
 	if (cb_ops && cb_ops->set_hartid_cb && !EVENT_IS_GLOBAL(event_id))
 		return SBI_EINVAL;
@@ -1265,11 +1291,8 @@ void sbi_sse_exit(struct sbi_scratch *scratch)
 		if (e->attrs.hartid != current_hartid())
 			goto skip;
 
-		if (sse_event_state(e) > SBI_SSE_STATE_REGISTERED) {
-			sbi_printf("Event %d in invalid state at exit",
-				   info->event_id);
+		if (sse_event_state(e) > SBI_SSE_STATE_REGISTERED)
 			sse_event_set_state(e, SBI_SSE_STATE_UNUSED);
-		}
 
 skip:
 		sse_event_put(e);

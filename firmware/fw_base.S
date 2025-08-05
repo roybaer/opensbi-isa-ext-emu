@@ -59,28 +59,38 @@ _try_lottery:
 	/* Jump to relocation wait loop if we don't get relocation lottery */
 	lla	a6, _boot_lottery
 	li	a7, BOOT_LOTTERY_ACQUIRED
+#ifdef __riscv_atomic
 	amoswap.w a6, a7, (a6)
 	bnez	a6, _wait_for_boot_hart
+#elif __riscv_zalrsc
+_sc_fail:
+	lr.w	t0, (a6)
+	sc.w	t1, a7, (a6)
+	bnez	t1, _sc_fail
+	bnez	t0, _wait_for_boot_hart
+#else
+#error "need a or zalrsc"
+#endif
 
 	/* relocate the global table content */
 	li	t0, FW_TEXT_START	/* link start */
 	lla	t1, _fw_start		/* load start */
 	sub	t2, t1, t0		/* load offset */
-	lla	t0, __rel_dyn_start
-	lla	t1, __rel_dyn_end
+	lla	t0, __rela_dyn_start
+	lla	t1, __rela_dyn_end
 	beq	t0, t1, _relocate_done
 2:
-	REG_L	t5, REGBYTES(t0)	/* t5 <-- relocation info:type */
+	REG_L	t5, __SIZEOF_LONG__(t0)	/* t5 <-- relocation info:type */
 	li	t3, R_RISCV_RELATIVE	/* reloc type R_RISCV_RELATIVE */
 	bne	t5, t3, 3f
 	REG_L	t3, 0(t0)
-	REG_L	t5, (REGBYTES * 2)(t0)	/* t5 <-- addend */
+	REG_L	t5, (__SIZEOF_LONG__ * 2)(t0)	/* t5 <-- addend */
 	add	t5, t5, t2
 	add	t3, t3, t2
 	REG_S	t5, 0(t3)		/* store runtime address to the GOT entry */
 
 3:
-	addi	t0, t0, (REGBYTES * 3)
+	addi	t0, t0, (__SIZEOF_LONG__ * 3)
 	blt	t0, t1, 2b
 _relocate_done:
 	/* At this point we are running from link address */
@@ -725,6 +735,27 @@ _reset_regs:
 	csrw CSR_MSCRATCH, 0
 
 	ret
+
+	.section .rodata
+.Lstack_corrupt_msg:
+	.string "stack smashing detected\n"
+
+	/* This will be called when the stack corruption is detected */
+	.section .text
+	.align 3
+	.globl __stack_chk_fail
+	.type __stack_chk_fail, %function
+__stack_chk_fail:
+	la	a0, .Lstack_corrupt_msg
+	call	sbi_panic
+
+	/* Initial value of the stack guard variable */
+	.section .data
+	.align 3
+	.globl __stack_chk_guard
+	.type __stack_chk_guard, %object
+__stack_chk_guard:
+	RISCV_PTR	0x95B5FF5A
 
 #ifdef FW_FDT_PATH
 	.section .rodata
