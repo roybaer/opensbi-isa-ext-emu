@@ -291,6 +291,7 @@ static const struct fdt_match spacemit_k1_match[] = {
 	{ .compatible = "spacemit,k1x" },
 	{ .compatible = "spacemit,k1-x" },
 	{ .compatible = "spacemit,k1" },
+	{ .compatible = "ky,x1" },
 	{ },
 };
 
