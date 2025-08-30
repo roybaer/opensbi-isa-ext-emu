@@ -991,6 +991,10 @@ __pmp_skip:
 	__check_csr_existence(CSR_CYCLE, SBI_HART_CSR_CYCLE);
 	__check_csr_existence(CSR_TIME, SBI_HART_CSR_TIME);
 	__check_csr_existence(CSR_INSTRET, SBI_HART_CSR_INSTRET);
+	__check_csr_existence(CSR_MENVCFG, SBI_HART_CSR_MENVCFG);
+	__check_csr_existence(CSR_SENVCFG, SBI_HART_CSR_SENVCFG);
+	/* Initialize value of emulated SENVCFG CSR */
+	scratch->sw_senvcfg = ENVCFG_CBZE | ENVCFG_CBCFE | ENVCFG_CBIE;
 
 #undef __check_csr_existence
 
