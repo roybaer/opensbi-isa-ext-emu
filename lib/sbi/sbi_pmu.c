@@ -804,6 +804,7 @@ static int pmu_ctr_find_hw(struct sbi_pmu_hart_state *phs,
 				continue;
 			/* We found a valid counter that is not started yet */
 			ctr_idx = cbase;
+			break;
 		}
 	}
 
