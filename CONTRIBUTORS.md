@@ -14,6 +14,8 @@ List of OpenSBI Contributors (Alphabetically sorted)
 
 * Atish Patra <atish.patra@wdc.com>
 
+* Benedikt Freisen <b.freisen@gmx.net>
+
 * Bin Meng <bmeng.cn@gmail.com>
 
 * Damien Le Moal <damien.lemoal@wdc.com>

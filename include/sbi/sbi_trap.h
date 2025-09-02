@@ -218,6 +218,8 @@ _Static_assert(
 #define GET_RS2S(insn, regs)		REG_VAL(GET_RS2S_NUM(insn), regs)
 #define GET_RS2C(insn, regs)		REG_VAL(GET_RS2C_NUM(insn), regs)
 #define SET_RD(insn, regs, val)		(REG_VAL(GET_RD_NUM(insn), regs) = (val))
+#define SET_RD1S(insn, regs, val)	(REG_VAL(GET_RS1S_NUM(insn), regs) = (val))
+#define SET_RD2S(insn, regs, val)	(REG_VAL(GET_RS2S_NUM(insn), regs) = (val))
 
 /** Representation of trap details */
 struct sbi_trap_info {

@@ -1,6 +1,63 @@
 RISC-V Open Source Supervisor Binary Interface (OpenSBI)
 ========================================================
 
+**NOTE:**
+
+This fork (opensbi-isa-ext-emu) provides experimental trap-based emulation
+routines for various ISA extensions that are relevant to RVA22, RVB23 and RVA23.
+
+The main goal is to bridge gaps between an existing hardware implementation's
+RISC-V ISA support and a more recent ISA profile.
+
+More specifically, the design goals for nominal feature completeness are
+
+* RVA22U64 and RVB23U64 compatibility on JH7110 platforms
+* RVA23U64 compatibility on SpacemiT K1/M1 / Ky X1 platforms
+
+CAUTION: The `isa-ext-emu` feature branch follows `upstream/master` via `rebase`!
+Its purpose is to provide a clean patch set rather than a history of all changes.
+
+The following ISA extensions are currently supported:
+
+| ISA extension | Required by  | Status
+|:--------------|:-------------|:------------------------------------------
+| Zba           | RVA22        | fully implemented
+| Zbb           | RVA22        | fully implemented
+| Zbs           | RVA22        | fully implemented
+| Zicbom        | RVA22        | fully implemented<sup>1</sup>
+| Zicboz        | RVA22        | fully implemented
+| Zfhmin        | RVA22        | fully implemented
+| Zicond        | RVB23, RVA23 | fully implemented
+| Zimop         | RVB23, RVA23 | fully implemented
+| Zcmop         | RVB23, RVA23 | fully implemented
+| Zcb           | RVB23, RVA23 | fully implemented
+| Zfa           | RVB23, RVA23 | fully implemented
+| Zawrs         | RVB23, RVA23 | fully implemented<sup>2</sup>
+| Zbc           | RVB23, RVA23 | fully implemented<sup>3</sup>
+| Zvbb          | RVA23        | fully implemented<sup>4</sup>
+| H             | RVA23        | no independent plans<sup>5</sup>
+| Supm          | RVA23        | implemented<sup>6</sup>
+
+Footnotes:
+
+1. Zicbom emulation depends on SiFive or XuanTie vendor extensions.
+2. Loops containing WRS.STO or WRS.NTO will degrade to busy waiting.
+3. Zbc is listed as an expansion option, i.e. is not actually required.
+4. Zvbb emulation relies on RVV 1.0 and Zbb hardware support.
+5. Note that the H extension is required in RVA23S64, but not in RVA23U64.
+   See [opensbi-h](https://github.com/dramforever/opensbi-h) for a fork that
+   already provides a software-emulated hypervisor extension.
+6. Pointer masking needs to be set up via SBI and relies on page faults.
+
+Nominally, the design goals mentioned above have been reached for JH7110.
+For the SpacemiT K1/M1 / Ky X1, they have been reached in the `k1-isa-ext-emu`
+branch, which is based on the `k1-opensbi` branch, an updated fork of earlier
+OpenSBI versions of the same name.
+
+**END OF NOTE**
+
+---
+
 ![RISC-V OpenSBI](docs/riscv_opensbi_logo_final_color.png)
 
 Copyright and License
