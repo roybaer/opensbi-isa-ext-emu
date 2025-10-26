@@ -285,6 +285,17 @@ static int sbi_trap_aia_irq(void)
 	return 0;
 }
 
+static inline bool sbi_pm_changes_ptr(ulong ptr, struct sbi_scratch *scratch)
+{
+	return scratch->sw_pm &&
+	       ptr != (ulong)((long)(ptr << scratch->sw_pm) >> scratch->sw_pm);
+}
+
+static inline void sbi_mask_ptr(ulong *pptr, struct sbi_scratch *scratch)
+{
+	*pptr = (long)(*pptr << scratch->sw_pm) >> scratch->sw_pm;
+}
+
 /**
  * Handle trap/interrupt
  *
@@ -358,6 +369,47 @@ struct sbi_trap_context *sbi_trap_handler(struct sbi_trap_context *tcntx)
 		rc  = sbi_double_trap_handler(tcntx);
 		msg = "double trap handler failed";
 		break;
+#if __riscv_xlen > 32
+	case CAUSE_FETCH_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(regs->mepc, scratch)) {
+			/* mask the program counter and try to continue */
+			sbi_mask_ptr(&regs->mepc, scratch);
+			rc  = 0;
+			msg = "pointer masking fetch handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (fetch page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+	case CAUSE_LOAD_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned load handler */
+			rc  = sbi_misaligned_load_handler(tcntx);
+			msg = "pointer masking load handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (load page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+	case CAUSE_STORE_PAGE_FAULT:
+		if (sbi_pm_changes_ptr(trap->tval, scratch)) {
+			sbi_mask_ptr(&tcntx->trap.tval, scratch);
+			/* redirect to misaligned store handler */
+			rc  = sbi_misaligned_store_handler(tcntx);
+			msg = "pointer masking store handler failed";
+		}
+		else {
+			/* If the trap came from S or U mode, redirect it there */
+			msg = "trap redirect failed (store page fault)";
+			rc  = sbi_trap_redirect(regs, trap);
+		}
+		break;
+#endif
 	default:
 		/* If the trap came from S or U mode, redirect it there */
 		msg = "trap redirect failed";
