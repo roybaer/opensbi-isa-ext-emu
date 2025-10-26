@@ -149,7 +149,7 @@ static void spacemit_pwr_domain_pwr_down_wfi(const psci_power_state_t *target_st
 
 			sbi_hartmask_clear_hartid(hartid, &psciipi_wait_hmask);
 
-			sbi_ipi_raw_clear();
+			sbi_ipi_raw_clear(true);
 			/* Restore MIE CSR */
 			csr_write(CSR_MIE, saved_mie);
 
