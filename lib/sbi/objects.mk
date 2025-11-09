@@ -85,6 +85,7 @@ libsbi-objs-y += sbi_illegal_atomic.o
 libsbi-objs-y += sbi_illegal_insn.o
 libsbi-objs-y += sbi_insn_emu.o
 libsbi-objs-y += sbi_insn_emu_fp.o
+libsbi-objs-y += sbi_insn_emu_v.o
 libsbi-objs-y += sbi_init.o
 libsbi-objs-y += sbi_ipi.o
 libsbi-objs-y += sbi_irqchip.o

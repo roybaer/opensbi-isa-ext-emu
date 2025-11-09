@@ -21,6 +21,7 @@
 #include <sbi/sbi_illegal_insn.h>
 #include <sbi/sbi_insn_emu.h>
 #include <sbi/sbi_insn_emu_fp.h>
+#include <sbi/sbi_insn_emu_v.h>
 #include <sbi/sbi_pmu.h>
 #include <sbi/sbi_trap.h>
 #include <sbi/sbi_unpriv.h>
@@ -169,7 +170,7 @@ static const illegal_insn_func illegal_insn_table[32] = {
 	truly_illegal_insn,	/* 18 */
 	truly_illegal_insn,	/* 19 */
 	sbi_insn_emu_op_fp,	/* 20 */
-	truly_illegal_insn,	/* 21 */
+	sbi_insn_emu_op_v,	/* 21 */
 	truly_illegal_insn,	/* 22 */
 	truly_illegal_insn,	/* 23 */
 	truly_illegal_insn,	/* 24 */

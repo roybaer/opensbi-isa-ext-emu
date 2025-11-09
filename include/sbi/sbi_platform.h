@@ -151,8 +151,14 @@ struct sbi_platform_operations {
 	void (*pmp_disable)(unsigned int n);
 };
 
+#ifdef CONFIG_EMU_ZVBB
+/** Platform default per-HART stack size for exception/interrupt handling,
+ * tentatively enlarged for buffer arrays used for Zvbb emulation */
+#define SBI_PLATFORM_DEFAULT_HART_STACK_SIZE	16384
+#else
 /** Platform default per-HART stack size for exception/interrupt handling */
 #define SBI_PLATFORM_DEFAULT_HART_STACK_SIZE	8192
+#endif
 
 /** Platform default heap size */
 #define SBI_PLATFORM_DEFAULT_HEAP_SIZE(__num_hart)	\
