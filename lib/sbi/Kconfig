@@ -72,7 +72,7 @@ config SBI_ECALL_MPXY
 
 config SBI_ISA_EXT_EMU
 	bool "Enable ISA extension emulation"
-	default n
+	default y
 
 source "$(OPENSBI_SRC_DIR)/lib/sbi/sbi_insn_emu.conf"
 
