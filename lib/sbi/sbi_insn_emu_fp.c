@@ -44,7 +44,7 @@ int sbi_insn_emu_store_fp(ulong insn, struct sbi_trap_regs *regs)
 	    (sbi_mstatus_prev_mode(regs->mstatus) != PRV_U ||
 	     (csr_read(CSR_SSTATUS) & SSTATUS_FS) != 0) &&
 	    (insn & INSN_MASK_FSH) == INSN_MATCH_FSH) {
-		tcntx->trap.cause = CAUSE_MISALIGNED_LOAD;
+		tcntx->trap.cause = CAUSE_MISALIGNED_STORE;
 		tcntx->trap.tval  = GET_RS1(insn, regs) + IMM_S(insn);
 		return sbi_misaligned_store_handler(tcntx);
 	}
